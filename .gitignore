@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+
+# Data
+eval_data/cache/
+chroma_db/
+*.db
+
+# 运行时记忆（含对话内容，不入库）
+.devpilot/
+
+# 前端
+node_modules/
+web/frontend-vue/dist/
+web/frontend/dist/
+*.log
+
+# 临时测试脚本
+tmp_*.py
+
+# TS 构建缓存
+*.tsbuildinfo

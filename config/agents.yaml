@@ -1,0 +1,42 @@
+# DevPilot Agent → Model 绑定配置
+# ============================================================================
+# 每个 agent 节点绑定一个模型，体现"不同任务/agent 绑不同模型"。
+# 值为"provider:model"格式：provider 必须在 .env 配了 API Key（见 config.py 的
+# settings.providers()），model 是该 provider 下的具体模型名。
+#
+# 修改后无需重启即可在下一次请求生效（每次构建 graph 时重新加载本文件）。
+# 若某 agent 的模型配置缺失或 provider 不可用，回退到默认链（deepseek→qwen）。
+# ============================================================================
+
+# 路由器：判意图用，要快、要稳，用通用对话模型即可
+# 接入本地 ollama：值用 "ollama:模型名"，模型名须与 `ollama list` 里的 tag 一致
+# （ollama tag 含冒号如 qwen2.5:7b，yaml 里写成 ollama:qwen2.5:7b，解析按首个冒号切分）。
+# ollama 未运行时 router 调用失败会自动降级到 chat 路由（见 nodes.py router_node 的 except）。
+router: "ollama:qwen2.5:7b"
+
+# 意图分类器（动态图用）：轻量二分类 simple/complex，用本地 ollama 快且免费。
+# 分类失败默认 complex 走 deepseek 规划兜底，故弱模型误判代价可控。
+classifier: "ollama:qwen2.5:7b"
+
+# 闲聊/问答节点：普通对话直接 ollama 直答（不规划），省规划开销。
+# 动态图 direct_chat 节点 + 固定分支 chat 节点都取这个 key。
+chat: "ollama:qwen2.5:7b"
+
+# WebSearch 节点：联网搜索 + 总结，用通用对话模型（需支持工具调用）
+websearch: "deepseek:deepseek-chat"
+
+# 研发流水线各角色
+# 动态图：classifier → simple 走 direct(ollama) / complex 走 planner(deepseek)→executor(deepseek)。
+# planner 用 deepseek 强模型专管复杂规划（ollama 7b 规划弱只产 1 步）。
+planner: "deepseek:deepseek-chat"
+coder: "deepseek:deepseek-chat"      # 真实场景可切 deepseek-coder 等专精模型
+reviewer: "deepseek:deepseek-chat"
+tester: "deepseek:deepseek-chat"
+
+# ChatFlow 式 SSE 图节点（新 /api/chat 端点用 build_chat_graph）
+# route_model 复用 router（ollama 5 标签分类，temp=0.0）；
+# call_model / call_model_after_tool 复用 coder（deepseek，支持原生 function-calling）；
+# planner 复用 planner（deepseek 规划）。以下为新角色：
+reflector: "deepseek:deepseek-chat"   # 反思节点（判 done/continue/retry，产 JSON 标签）
+extractor: "deepseek:deepseek-chat"   # 抽取记忆事实（可降 ollama 省钱）
+# compressor 不调 LLM（仅写 JSONL），无需绑定。

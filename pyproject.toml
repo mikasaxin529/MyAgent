@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devpilot"
+version = "0.1.0"
+description = "软件研发全流程 AI Agent 平台"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+    # LLM 调用：DeepSeek/Qwen 均兼容 OpenAI SDK
+    "openai>=1.40.0",
+    # 配置与工具
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+# skills extras：让 Repo/CICD/Issue Skill 的远端写操作真正可用。
+# - PyGithub：RepoSkill 真实发 GitHub PR（缺失则降级为仅本地 git 提交）。
+# - requests：CICDSkill 调 Jenkins REST API、IssueSkill 调 Jira REST API。
+# 缺失这些包时，相关 Skill 方法返回明确提示而非崩溃（惰性导入，顶层 import 不受影响）。
+skills = [
+    "PyGithub>=2.0.0",
+    "requests>=2.31.0",
+]
+# rag extras：启用 Codebase RAG 向量检索能力。
+# - chromadb：本地向量库，做代码块嵌入与相似度检索。
+# 缺失时 RAG 模块降级为不可用，不影响其他命令。
+rag = [
+    "chromadb>=0.5.0",
+]
+# web extras：启用 HTTP API + WebSocket 服务（前端对接）。
+# - fastapi：REST/WS API 框架。
+# - uvicorn：ASGI 服务器。
+# 缺失时不影响 CLI 使用；安装后用 `uvicorn devpilot.web.api:app` 启动。
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+]
+# graph extras：启用 langgraph 智能编排层（agent 路由 / 流式聊天 / 图形流可视化）。
+# - langgraph：StateGraph 编排 router→chat/websearch/dev 多 agent 分支。
+# - langchain-core / langchain-openai / langchain-community：langchain agent 与 Tavily 工具集成。
+# - tavily-python：WebSearch agent 的搜索后端（缺失 TAVILY_API_KEY 时降级提示）。
+# - pyyaml：加载 config/agents.yaml 的 agent→model 绑定映射。
+# 缺失时 graph 模块不可用，CLI 与既有 web 通道不受影响。
+graph = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-community>=0.3.0",
+    "tavily-python>=0.5.0",
+    "pyyaml>=6.0",
+]
+# dev extras：开发与测试工具链。
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+devpilot = "devpilot.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
