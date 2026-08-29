@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import queue as _queue
 import time
 from dataclasses import asdict
@@ -562,7 +563,10 @@ async def serve_file(agent_id: str, session: str, filename: str) -> Any:
 # SPA 客户端路由。/assets/* 走 StaticFiles（JS/CSS chunk），其余未匹配路径
 # 回退 index.html，让 react-router 在客户端解析 /run、/eval 等深链。
 # ----------------------------------------------------------------------
-_dist = Path(__file__).resolve().parents[3] / "web" / "frontend" / "dist"
+# 优先取 DEVPILOT_DIST_DIR 环境变量（Docker 里 pip install 非 editable 安装时，
+# __file__ 位于 site-packages，仓库相对路径推断会指向不存在的位置）。
+_dist = Path(os.environ.get("DEVPILOT_DIST_DIR")
+             or Path(__file__).resolve().parents[3] / "web" / "frontend" / "dist")
 if _dist.is_dir():
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles

@@ -14,7 +14,8 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    TZ=Asia/Shanghai
+    TZ=Asia/Shanghai \
+    DEVPILOT_DIST_DIR=/app/dist
 
 WORKDIR /app
 
@@ -24,8 +25,9 @@ COPY src/ ./src/
 RUN pip install --upgrade pip \
     && pip install ".[web,graph]"
 
-# 前端构建产物。api.py 按 parents[3]/web/frontend/dist 定位，路径必须一致
-COPY --from=webbuild /web/dist ./web/frontend/dist
+# 前端构建产物。api.py 优先读 DEVPILOT_DIST_DIR（非 editable 安装时
+# __file__ 在 site-packages，仓库相对路径推断会失效）
+COPY --from=webbuild /web/dist ./dist
 # agent→model 绑定等资源配置
 COPY config/ ./config/
 
