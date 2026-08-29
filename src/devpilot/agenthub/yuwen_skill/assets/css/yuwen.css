@@ -1,0 +1,189 @@
+/* 小学语文课件 · 暖白大字卡片样式（与 PPTX 同一套 token） */
+:root {
+  --bg: #FDF9F1;
+  --bg-card: #FFFFFF;
+  --title-bar: #ED7D31;
+  --text: #4A3B2E;
+  --title-text: #3D2B1F;
+  --text-light: #9C8B78;
+  --accent: #ED7D31;
+  --accent2: #3E8E5A;
+  --accent3: #3E7BB6;
+  --divider: #EAD9BE;
+  /* 关键词高亮轮换色 */
+  --hl1: #3E7BB6;
+  --hl2: #3E8E5A;
+  --hl3: #E2574C;
+  --hl4: #8E6BB5;
+  /* 声调标色 */
+  --tone1: #D9534F;
+  --tone2: #E8A33C;
+  --tone3: #5BA88A;
+  --tone4: #5B8AB5;
+  --tone0: #9AA0A6;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  font-family: "微软雅黑", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "黑体", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* 幻灯片容器：全屏单页 */
+.deck { width: 100vw; height: 100vh; position: relative; }
+.slide {
+  display: none;
+  width: 100%; height: 100%;
+  padding: 0;
+  background: var(--bg);
+  position: relative;
+}
+.slide.active { display: flex; flex-direction: column; }
+
+/* 封面 */
+.slide.cover {
+  justify-content: center; align-items: center; text-align: center;
+}
+.slide.cover .cover-title {
+  font-size: 5em; color: var(--accent); font-weight: 800;
+  margin-bottom: 0.3em;
+}
+.slide.cover .cover-sub { font-size: 1.6em; color: var(--text-light); }
+.slide.cover .cover-period { font-size: 1.4em; color: var(--accent2); margin-top: 0.5em; }
+
+/* 标题色带 */
+.title-bar {
+  background: var(--title-bar);
+  color: #fff; font-size: 2em; font-weight: 700;
+  padding: 0.4em 1.2em;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.title-bar .period-tag { font-size: 0.6em; opacity: 0.95; }
+
+/* 内容区 */
+.content {
+  flex: 1; padding: 1em 2.2em; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.6em;
+}
+
+/* 元素样式 */
+.elem-h1 { font-size: 2em; color: var(--accent); font-weight: 700; margin: 0.2em 0; }
+.elem-h2 { font-size: 1.6em; color: var(--accent); font-weight: 700; margin: 0.2em 0; }
+.elem-h3 { font-size: 1.3em; color: var(--accent); font-weight: 600; margin: 0.1em 0; }
+.elem-paragraph { font-size: 1.4em; line-height: 1.8; }
+.elem-paragraph .emph { color: var(--accent); font-weight: 700; }
+.elem-list { font-size: 1.3em; line-height: 1.9; padding-left: 1.2em; }
+.elem-list li { margin: 0.2em 0; }
+.elem-quote {
+  font-family: "楷体", "KaiTi", "STKaiti", serif;
+  font-size: 1.8em; color: var(--accent); text-align: center;
+  padding: 0.4em 1em; background: #fff; border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.elem-quote .quote-src { display: block; font-size: 0.5em; color: var(--text-light); text-align: right; }
+
+/* 注音 ruby */
+ruby { ruby-position: over; }
+ruby rt {
+  font-size: 0.45em; font-family: Consolas, monospace;
+  letter-spacing: 0.05em;
+}
+ruby rt.t1 { color: var(--tone1); }
+ruby rt.t2 { color: var(--tone2); }
+ruby rt.t3 { color: var(--tone3); }
+ruby rt.t4 { color: var(--tone4); }
+ruby rt.t0 { color: var(--tone0); }
+.ruby-line { font-size: 2em; text-align: center; padding: 0.5em; }
+
+/* 古诗 */
+.poem { text-align: center; padding: 1em; }
+.poem .poem-title { font-family: "楷体", serif; font-size: 2.4em; color: var(--accent); margin-bottom: 0.4em; }
+.poem .poem-line { font-family: "楷体", serif; font-size: 2em; margin: 0.3em 0; }
+
+/* 生字卡 */
+.word-cards {
+  display: grid; gap: 1em;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  padding: 0.5em;
+}
+.word-card {
+  background: var(--bg-card); border-radius: 16px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+  padding: 0.8em; text-align: center;
+}
+.word-card .wc-pinyin { font-family: Consolas, monospace; font-size: 1.3em; color: var(--accent2); }
+.word-card .wc-char {
+  font-size: 4em; font-weight: 800; color: var(--text); line-height: 1.1;
+}
+.word-card .wc-groups { font-size: 1.1em; color: var(--text-light); margin-top: 0.3em; }
+.word-card .wc-sentence { font-size: 1em; color: var(--text-light); margin-top: 0.2em; }
+
+/* 田字格/写字 */
+.revision { display: grid; gap: 1em; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.revision-card { background: var(--bg-card); border-radius: 14px; padding: 1em; display: flex; gap: 1em; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.tianzi {
+  width: 130px; height: 130px; flex-shrink: 0;
+  background: #fff; border: 2px solid var(--text-light);
+  position: relative; display: flex; align-items: center; justify-content: center;
+}
+.tianzi::before, .tianzi::after {
+  content: ''; position: absolute; background: var(--divider);
+}
+.tianzi::before { left: 50%; top: 5%; bottom: 5%; width: 1px; }
+.tianzi::after { top: 50%; left: 5%; right: 5%; height: 1px; }
+.tianzi .big-char { font-size: 3.5em; color: var(--text); position: relative; z-index: 1; }
+.revision-note { font-size: 1.1em; line-height: 1.6; }
+.revision-note b { color: var(--accent); }
+
+/* 板书 */
+.board { text-align: center; padding: 1em; }
+.board-title { font-family: "楷体", serif; font-size: 2.4em; color: var(--accent); margin-bottom: 0.6em; }
+.board-node { font-size: 1.5em; font-weight: 700; margin: 0.3em 0; }
+.board-child { font-size: 1.2em; color: var(--text-light); margin-left: 2em; }
+
+/* 课堂互动 */
+.discussion {
+  background: #fff; border-left: 6px solid var(--accent2);
+  border-radius: 8px; padding: 1em 1.2em; font-size: 1.4em;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.discussion .q { color: var(--accent2); font-weight: 700; margin-bottom: 0.5em; }
+.discussion .hint { color: var(--text-light); font-size: 0.8em; }
+.discussion .form { display: inline-block; background: var(--accent); color: #fff; border-radius: 6px; padding: 0.1em 0.6em; font-size: 0.7em; margin-top: 0.5em; }
+
+/* 表格 */
+.elem-table { width: 100%; border-collapse: collapse; font-size: 1.2em; margin: 0.5em 0; }
+.elem-table th { background: var(--accent); color: #fff; padding: 0.5em; }
+.elem-table td { background: #fff; padding: 0.5em; border: 1px solid var(--divider); text-align: center; }
+.elem-table tr:nth-child(even) td { background: var(--bg); }
+
+/* 评价量表用表格同款 */
+
+/* 教师备注（默认隐藏） */
+.note { font-size: 1em; color: var(--text-light); background: #fff7ee; border-radius: 6px; padding: 0.5em 0.8em; }
+.note::before { content: "📋 "; }
+
+/* 图片 */
+.elem-image { text-align: center; }
+.elem-image img { max-width: 80%; max-height: 50vh; border-radius: 12px; }
+.elem-image .caption { font-size: 1em; color: var(--text-light); margin-top: 0.3em; }
+
+/* 导航 */
+.nav {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: rgba(61,43,31,0.85); color: #fff;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.5em 2em; font-size: 1.1em; z-index: 100;
+}
+.nav button {
+  background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 0.4em 1.2em; font-size: 1em; cursor: pointer;
+}
+.nav button:hover { background: #c8622f; }
+.nav .counter { font-family: Consolas, monospace; }
+
+/* 进度条 */
+.progress { position: fixed; top: 0; left: 0; height: 4px; background: var(--accent); z-index: 101; transition: width 0.3s; }

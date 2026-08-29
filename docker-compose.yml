@@ -1,0 +1,28 @@
+services:
+  devpilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE:-devpilot:latest}
+    container_name: devpilot
+    restart: unless-stopped
+    ports:
+      - "8000:8000"           # 对外端口；只想内网/反代访问可改 "127.0.0.1:8000:8000"
+    env_file:
+      - .env                  # 模型 Key 等敏感配置；不进镜像
+    environment:
+      - DEVILOT_PRIMARY_MODEL=${DEVILOT_PRIMARY_MODEL:-deepseek}
+    volumes:
+      - ./outputs:/app/outputs            # 课件交付物持久化（/files 下载读取此目录）
+      - ./logs:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

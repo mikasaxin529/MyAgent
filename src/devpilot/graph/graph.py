@@ -117,7 +117,7 @@ def build_graph(gateway, registry, audit=None, approval=None, emitter=None) -> A
 def build_chat_graph_runtime(audit=None, approval=None):
     """装配 chat graph 运行时：返回 (gateway, registry, audit, approval, graph, emitter_setter)。
 
-    与 web.runtime.build_runtime 平行的工厂，供 /ws/chat 使用。
+    与 web.runtime.build_runtime 平行的工厂，供 SSE 聊天端点使用。
     emitter 默认 None，调用方通过返回的 emitter 设置器注入帧回调。
 
     返回：

@@ -1,0 +1,28 @@
+# 敏感与环境文件（.env 通过 compose env_file 注入，绝不进镜像层）
+.env
+.env.*
+!.env.example
+
+# 本地开发产物
+.git
+.venv
+.pytest_cache
+.devpilot
+outputs/
+tmp_*.py
+uv.lock
+
+# 前端（构建在 stage 1 干净进行，宿主机 node_modules 不进上下文）
+web/frontend/node_modules
+web/frontend/dist
+web/frontend-vue
+
+# Python 缓存
+**/__pycache__
+**/*.pyc
+*.tsbuildinfo
+web/frontend/*.tsbuildinfo
+
+# 文档与测试不进镜像（tests 仅开发用）
+docs/
+eval_data/

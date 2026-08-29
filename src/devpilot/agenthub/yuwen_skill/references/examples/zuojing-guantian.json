@@ -1,0 +1,276 @@
+{
+  "version": "1.0",
+  "meta": {
+    "title": "坐井观天",
+    "grade": 2,
+    "lessonType": "精读",
+    "textbook": "部编版二年级上册",
+    "periods": 2,
+    "coreCompetencies": ["文化自信", "语言运用", "思维能力", "审美创造"],
+    "objectives": [
+      { "content": "认识\"沿、答、渴、喝、话、弄、错、际、抬\"9个生字，会写\"井、观、沿、答、渴、喝\"6个字", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "正确、流利、有感情地朗读课文，分角色读好小鸟和青蛙的对话", "competency": "语言运用", "dimension": "过程与方法" },
+      { "content": "理解\"坐井观天、无边无际\"等词语的意思，体会它们在文中的表达效果", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "懂得故事蕴含的道理，知道看问题要全面，不能目光短浅", "competency": "思维能力", "dimension": "情感态度与价值观" }
+    ],
+    "keyPoints": ["识字写字", "有感情朗读，分角色朗读", "理解\"坐井观天、无边无际\""],
+    "difficulties": ["体会故事蕴含的道理", "分角色读出不同语气"]
+  },
+  "slides": [
+    {
+      "id": "p1-01", "kind": "cover", "title": "坐井观天", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "坐井观天", "size": "h1" },
+        { "type": "paragraph", "content": "部编版二年级上册 · 第 1 课时", "emphasize": [] },
+        { "type": "image", "src": "", "caption": "井底之蛙" }
+      ]
+    },
+    {
+      "id": "p1-02", "kind": "toc", "title": "本课时目录", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "第 1 课时 目录", "size": "h2" },
+        { "type": "list", "items": ["情境导入", "初读感知", "会认字", "会写字", "词语理解", "再读梳理", "课堂小结", "基础作业"], "ordered": true }
+      ]
+    },
+    {
+      "id": "p1-03", "kind": "objectives", "title": "学习目标", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "学习目标", "size": "h1" },
+        { "type": "list", "items": ["认识9个生字，会写6个字", "正确流利有感情地朗读课文", "理解\"坐井观天、无边无际\"的意思", "懂得故事蕴含的道理"], "ordered": true }
+      ]
+    },
+    {
+      "id": "p1-04", "kind": "intro", "title": "情境导入", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "情境导入", "size": "h1" },
+        { "type": "paragraph", "content": "一只青蛙坐在井里，一只小鸟飞来，落在井沿上。它们之间会发生什么故事呢？", "emphasize": [{"start": 2, "end": 4}] },
+        { "type": "discussion", "question": "你看到过\"井\"吗？说说井是什么样子的。", "hint": "联系生活，想想井口的形状和大小。", "form": "全班交流" }
+      ]
+    },
+    {
+      "id": "p1-05", "kind": "reading", "title": "初读感知 · 注音课文", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "初读感知", "size": "h1" },
+        { "type": "paragraph", "content": "朗读要求：读准字音，读通句子，遇到难读的地方多读几遍。", "emphasize": [{"start": 0, "end": 4}] },
+        { "type": "ruby-line", "text": "青蛙坐在井里。小鸟飞来，落在井沿上。", "ruby": "qīng wā zuò zài jǐng lǐ xiǎo niǎo fēi lái luò zài jǐng yán shang" }
+      ]
+    },
+    {
+      "id": "p1-06", "kind": "reading", "title": "初读感知 · 课文续", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "初读感知", "size": "h2" },
+        { "type": "ruby-line", "text": "青蛙问小鸟：你从哪儿来呀？小鸟说：我从天上来，飞了一百多里，口渴了，下来找点水喝。", "ruby": "qīng wā wèn xiǎo niǎo nǐ cóng nǎr lái ya xiǎo niǎo shuō wǒ cóng tiān shang lái fēi le yī bǎi duō lǐ kǒu kě le xià lái zhǎo diǎn shuǐ hē" }
+      ]
+    },
+    {
+      "id": "p1-07", "kind": "word-cards", "title": "会认字 · 生字朋友", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "我会认", "size": "h1" },
+        { "type": "word-card", "cards": [
+          { "char": "沿", "pinyin": "yán", "radical": "氵", "strokes": 8, "strokeOrder": ["点","点","提","撇","横折折","横折","横","竖弯钩"], "groups": ["井沿","沿着"], "sentence": "小鸟落在井沿上。" },
+          { "char": "答", "pinyin": "dá", "radical": "竹", "strokes": 12, "strokeOrder": ["撇","横","点","撇","横","点","撇","捺","横","竖","竖","横"], "groups": ["回答","答话"], "sentence": "青蛙回答了小鸟的问题。" },
+          { "char": "渴", "pinyin": "kě", "radical": "氵", "strokes": 12, "strokeOrder": ["点","点","提","竖","横折","横","横","竖","横折","横","竖折","横"], "groups": ["口渴","渴望"], "sentence": "小鸟口渴了，下来找水喝。" },
+          { "char": "喝", "pinyin": "hē", "radical": "口", "strokes": 12, "strokeOrder": ["竖","横折","横","竖","横折","横","横","撇","横折","横","竖弯钩","撇"], "groups": ["喝水","喝酒"], "sentence": "下来找点水喝。" }
+        ]}
+      ]
+    },
+    {
+      "id": "p1-08", "kind": "word-cards", "title": "会认字 · 续", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "我会认", "size": "h2" },
+        { "type": "word-card", "cards": [
+          { "char": "话", "pinyin": "huà", "radical": "讠", "strokes": 8, "strokeOrder": ["点","横折提","撇","横","竖","竖","横折","横"], "groups": ["说话","对话"], "sentence": "它们说起话来。" },
+          { "char": "弄", "pinyin": "nòng", "radical": "廾", "strokes": 7, "strokeOrder": ["横","横","竖","横","撇","竖","横"], "groups": ["弄清","摆弄"], "sentence": "要弄清事情的真相。" },
+          { "char": "错", "pinyin": "cuò", "radical": "钅", "strokes": 13, "strokeOrder": ["撇","横","横","横","竖提","横","竖","竖","横","竖","横折","横","横"], "groups": ["错误","弄错"], "sentence": "你可别弄错了。" },
+          { "char": "际", "pinyin": "jì", "radical": "阝", "strokes": 7, "strokeOrder": ["横折折折","竖","横","横","竖","撇","捺"], "groups": ["无边无际","天际"], "sentence": "天无边无际，大得很哪！" }
+        ]}
+      ]
+    },
+    {
+      "id": "p1-09", "kind": "writing", "title": "会写字 · 田字格", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "我会写", "size": "h1" },
+        { "type": "revision", "chars": [
+          { "char": "井", "pinyin": "jǐng", "易错点": "横画间距要匀称，竖画在横画正中", "运笔要点": "先写两横，再写撇竖" },
+          { "char": "观", "pinyin": "guān", "易错点": "右边\"见\"的竖弯钩要舒展", "运笔要点": "左窄右宽" }
+        ]}
+      ]
+    },
+    {
+      "id": "p1-10", "kind": "writing", "title": "会写字 · 续", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "我会写", "size": "h2" },
+        { "type": "revision", "chars": [
+          { "char": "沿", "pinyin": "yán", "易错点": "右上\"几\"不要写成\"儿\"", "运笔要点": "左窄右宽，右上横折弯钩" },
+          { "char": "答", "pinyin": "dá", "易错点": "竹字头要写紧凑", "运笔要点": "上下结构，上宽下窄" }
+        ]}
+      ]
+    },
+    {
+      "id": "p1-11", "kind": "words", "title": "词语理解", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "词语理解", "size": "h1" },
+        { "type": "table", "headers": ["词语", "读音", "意思"], "rows": [["坐井观天", "zuò jǐng guān tiān", "坐在井底看天，比喻目光短浅"], ["无边无际", "wú biān wú jì", "没有边际，形容范围极为广阔"], ["井沿", "jǐng yán", "井的边沿"]] }
+      ]
+    },
+    {
+      "id": "p1-12", "kind": "outline", "title": "再读梳理", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "再读梳理 · 课文主要内容", "size": "h1" },
+        { "type": "paragraph", "content": "青蛙坐在井里，小鸟飞来落在井沿上。它们为天有多大争论起来。青蛙认为天只有井口那么大，小鸟却说天无边无际。", "emphasize": [{"start": 28, "end": 32}] },
+        { "type": "discussion", "question": "青蛙和小鸟为什么会有不同的看法？", "hint": "想想它们各自所处的位置。", "form": "同桌互说" }
+      ]
+    },
+    {
+      "id": "p1-13", "kind": "summary", "title": "课堂小结", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "课堂小结", "size": "h1" },
+        { "type": "paragraph", "content": "这节课我们初读了课文，认识了生字新词，知道了青蛙和小鸟为天的争论。下节课我们继续探究，看看谁说得对。", "emphasize": [] }
+      ]
+    },
+    {
+      "id": "p1-14", "kind": "homework", "title": "基础作业", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "作业布置", "size": "h1" },
+        { "type": "list", "items": ["抄写本课6个会写字，各3遍", "正确流利地朗读课文3遍", "思考：青蛙和小鸟谁说得对？为什么？"], "ordered": true }
+      ]
+    },
+    {
+      "id": "p2-01", "kind": "review", "title": "复习导入", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "复习导入", "size": "h1" },
+        { "type": "paragraph", "content": "听写词语：井沿、回答、口渴、喝水、说话、弄错、无边无际", "emphasize": [] },
+        { "type": "discussion", "question": "上节课我们知道了什么？青蛙和小鸟在争论什么？", "hint": "回顾课文主要内容。", "form": "全班交流" }
+      ]
+    },
+    {
+      "id": "p2-02", "kind": "analysis", "title": "精读品析 · 青蛙的话", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "精读品析", "size": "h1" },
+        { "type": "quote", "content": "朋友，别说大话了！天不过井口那么大，还用飞那么远吗？", "source": "青蛙" },
+        { "type": "discussion", "question": "从青蛙的话里，你体会到它怎样的语气？", "hint": "注意\"别说大话了\"\"不过\"\"还用\"这些词。", "form": "小组讨论" }
+      ]
+    },
+    {
+      "id": "p2-03", "kind": "analysis", "title": "精读品析 · 小鸟的话", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "精读品析", "size": "h2" },
+        { "type": "quote", "content": "你弄错了。天无边无际，大得很哪！", "source": "小鸟" },
+        { "type": "paragraph", "content": "小鸟飞了一百多里，说明它见过很大的天。\"无边无际\"说明天非常非常大。", "emphasize": [{"start": 9, "end": 13}] }
+      ]
+    },
+    {
+      "id": "p2-04", "kind": "analysis", "title": "精读品析 · 争论升级", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "精读品析 · 争论升级", "size": "h2" },
+        { "type": "quote", "content": "青蛙笑了，说：朋友，我天天坐在井里，一抬头就看见天。我不会弄错的。", "source": "青蛙" },
+        { "type": "discussion", "question": "青蛙为什么\"笑\"？它的笑里有什么意味？", "hint": "青蛙觉得自己天天坐井观天，怎么会错。", "form": "小组讨论" }
+      ]
+    },
+    {
+      "id": "p2-05", "kind": "analysis", "title": "精读品析 · 小鸟的劝告", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "精读品析", "size": "h2" },
+        { "type": "quote", "content": "小鸟也笑了，说：朋友，你是弄错了。不信，你跳出井口来看一看吧。", "source": "小鸟" },
+        { "type": "paragraph", "content": "小鸟笑着劝青蛙跳出井口，亲眼看看外面的天。如果青蛙跳出井来，它会看到怎样的天呢？", "emphasize": [{"start": 0, "end": 2}] }
+      ]
+    },
+    {
+      "id": "p2-06", "kind": "discuss", "title": "合作探究", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "合作探究", "size": "h1" },
+        { "type": "discussion", "question": "青蛙和小鸟谁说得对？为什么它们看到的\"天\"不一样？", "hint": "青蛙在井底，视野狭窄；小鸟在天空，视野开阔。看问题的角度不同，结论就不同。", "form": "小组讨论" }
+      ]
+    },
+    {
+      "id": "p2-07", "kind": "read-guide", "title": "朗读指导", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "朗读指导 · 分角色朗读", "size": "h1" },
+        { "type": "paragraph", "content": "青蛙的语气：自信、不以为然；小鸟的语气：真诚、耐心劝说。", "emphasize": [] },
+        { "type": "ruby-line", "text": "天不过井口那么大，还用飞那么远吗？", "ruby": "tiān bù guò jǐng kǒu nà me dà hái yòng fēi nà me yuǎn ma" }
+      ]
+    },
+    {
+      "id": "p2-08", "kind": "writing-method", "title": "写法总结", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "写法总结", "size": "h1" },
+        { "type": "list", "items": ["通过对话展开故事，推进情节", "青蛙和小鸟的语言符合各自身份", "运用对比，凸显\"看问题要全面\"的道理"], "ordered": false }
+      ]
+    },
+    {
+      "id": "p2-09", "kind": "extend", "title": "拓展延伸", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "拓展延伸", "size": "h1" },
+        { "type": "paragraph", "content": "想一想，青蛙如果跳出井口，它会看到什么？说什么？", "emphasize": [{"start": 3, "end": 9}] },
+        { "type": "discussion", "question": "生活中你有没有\"坐井观天\"的时候？说说怎样做才能看得更全面。", "hint": "联系生活，多看多听多想。", "form": "同桌互说" }
+      ]
+    },
+    {
+      "id": "p2-10", "kind": "board", "title": "板书设计", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "板书设计", "size": "h1" },
+        { "type": "board", "title": "坐井观天", "structure": [
+          { "node": "青蛙（井底）", "children": [{"node": "天井口大"}, {"node": "目光短浅"}] },
+          { "node": "小鸟（天上）", "children": [{"node": "天无边无际"}, {"node": "目光远大"}] },
+          { "node": "道理：看问题要全面", "children": [] }
+        ]}
+      ]
+    },
+    {
+      "id": "p2-11", "kind": "practice", "title": "课堂练习", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "课堂练习", "size": "h1" },
+        { "type": "list", "items": ["选词填空：青蛙坐在（井里/天上）。", "判断：青蛙说得对。（  ）小鸟说得对。（ ）", "用\"无边无际\"说一句话。"], "ordered": true }
+      ]
+    },
+    {
+      "id": "p2-12", "kind": "homework", "title": "分层作业", "period": 2,
+      "elements": [
+        { "type": "heading", "content": "分层作业", "size": "h1" },
+        { "type": "list", "items": ["【基础】有感情朗读课文，分角色读给家人听。", "【提升】续写：青蛙跳出井口后……", "【拓展】收集一个成语故事，讲给同学听。"], "ordered": true }
+      ]
+    },
+    {
+      "id": "p2-13", "kind": "end", "title": "结束", "period": 2,
+      "elements": [
+        { "type": "divider" },
+        { "type": "heading", "content": "谢谢聆听", "size": "h1" }
+      ]
+    }
+  ],
+  "lessonPlan": {
+    "title": "坐井观天（第 1 课时）",
+    "base": { "textbook": "部编版二年级上册", "grade": "二年级", "periods": "2", "lessonType": "精读" },
+    "objectives": [
+      { "content": "认识9个生字，会写6个字", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "正确流利有感情朗读，分角色朗读", "competency": "语言运用", "dimension": "过程与方法" },
+      { "content": "理解\"坐井观天、无边无际\"的意思", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "懂得看问题要全面的道理", "competency": "思维能力", "dimension": "情感态度与价值观" }
+    ],
+    "keyPoints": ["识字写字", "有感情朗读，分角色朗读", "理解\"坐井观天、无边无际\""],
+    "difficulties": ["体会故事蕴含的道理", "分角色读出不同语气"],
+    "preparation": "多媒体课件、生字卡片、课文朗读音频",
+    "periods": "2课时",
+    "teachingProcess": [
+      { "phase": "一、情境导入", "duration": "3-5分钟", "activities": [{"teacher": "出示井的图片，谈话引入：一只青蛙坐在井里……", "student": "观察图片，想象井的样子，进入课文情境。"}], "design": "设计意图：从生活经验出发，激发兴趣，自然引入课题。" },
+      { "phase": "二、初读课文，整体感知", "duration": "10-12分钟", "activities": [{"teacher": "范读课文，出示带拼音课文，引导自由朗读。", "student": "自由朗读，读准字音，读通句子，遇到难读处多读几遍。"}], "design": "设计意图：初读整体感知，为识字品析打基础。" },
+      { "phase": "三、生字教学，指导书写", "duration": "8-10分钟", "activities": [{"teacher": "出示生字卡片，引导认读、分析字形、组词造句；范写\"井、观\"等字。", "student": "认读生字，分析字形结构，观察范写，练写描红。"}], "design": "设计意图：落实识字写字，低段重点，写字姿势与笔画规范。" },
+      { "phase": "四、再读梳理", "duration": "8-10分钟", "activities": [{"teacher": "引导分段朗读，梳理青蛙和小鸟的争论。", "student": "分段朗读，概括课文主要内容。"}], "design": "设计意图：理清脉络，为第二课时精读品析铺垫。" },
+      { "phase": "五、课堂小结，布置作业", "duration": "3-5分钟", "activities": [{"teacher": "小结本课时所学，布置抄写朗读作业。", "student": "回顾所学，记录作业。"}], "design": "设计意图：巩固所学，预习下节课。" }
+    ],
+    "boardDesign": { "structure": "坐井观天：青蛙（井底）天井口大—目光短浅；小鸟（天上）天无边无际—目光远大；道理：看问题要全面" },
+    "homework": { "levels": [
+      { "level": "基础", "items": ["抄写6个会写字各3遍", "正确流利朗读课文3遍"] },
+      { "level": "提升", "items": ["续写：青蛙跳出井口后……"] },
+      { "level": "拓展", "items": ["收集一个成语故事讲给同学听"] }
+    ]},
+    "reflection": ""
+  },
+  "handout": {
+    "levels": [
+      { "level": "基础", "items": ["抄写6个会写字各3遍", "正确流利朗读课文3遍"] },
+      { "level": "提升", "items": ["续写：青蛙跳出井口后……"] },
+      { "level": "拓展", "items": ["收集一个成语故事讲给同学听"] }
+    ]
+  }
+}

@@ -20,15 +20,15 @@ export default function EvalPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <header className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+      <header className="px-6 py-4 border-b border-[var(--line)] flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Eval</h1>
-          <p className="text-xs text-slate-500">Run the evaluation harness and inspect per-tag results.</p>
+          <p className="text-xs text-[var(--text3)]">Run the evaluation harness and inspect per-tag results.</p>
         </div>
         <button
           onClick={run}
           disabled={loading}
-          className="px-5 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium"
+          className="px-5 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:bg-[var(--panel)] disabled:text-[var(--text3)] text-white text-sm font-medium"
         >
           {loading ? "Running…" : "Run eval"}
         </button>
@@ -41,7 +41,7 @@ export default function EvalPage() {
           </div>
         )}
         {!result && !error && (
-          <div className="h-full flex items-center justify-center text-slate-600 text-sm">
+          <div className="h-full flex items-center justify-center text-[var(--text3)] text-sm">
             No evaluation results yet.
           </div>
         )}
@@ -54,7 +54,7 @@ export default function EvalPage() {
               <Metric label="Avg Token Cost" value={`${result.avg_token_cost}`} />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-300 mb-3">Per-tag accuracy</h2>
+              <h2 className="text-sm font-semibold text-[var(--text2)] mb-3">Per-tag accuracy</h2>
               <PerTagBarChart result={result} />
             </div>
           </>
@@ -66,9 +66,9 @@ export default function EvalPage() {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="px-4 py-3 rounded-lg bg-slate-900 border border-slate-800">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="text-lg font-semibold text-slate-100 mt-1">{value}</div>
+    <div className="px-4 py-3 rounded-lg bg-[var(--sunken)] border border-[var(--line)]">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--text3)]">{label}</div>
+      <div className="text-lg font-semibold text-[var(--text)] mt-1">{value}</div>
     </div>
   );
 }
@@ -76,7 +76,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 function PerTagBarChart({ result }: { result: EvalResult }) {
   const entries = Object.entries(result.per_tag);
   if (entries.length === 0) {
-    return <div className="text-slate-600 text-sm">No per-tag data.</div>;
+    return <div className="text-[var(--text3)] text-sm">No per-tag data.</div>;
   }
 
   const width = 640;
@@ -106,7 +106,7 @@ function PerTagBarChart({ result }: { result: EvalResult }) {
               <text
                 x={0}
                 y={y + barHeight / 2 + 4}
-                fill="#94a3b8"
+                fill="var(--text3)"
                 fontSize="12"
                 fontFamily="ui-monospace, monospace"
               >
@@ -118,7 +118,7 @@ function PerTagBarChart({ result }: { result: EvalResult }) {
                 width={chartW}
                 height={barHeight}
                 rx={4}
-                fill="#1e293b"
+                fill="var(--line)"
               />
               <rect
                 x={labelW}
@@ -126,12 +126,12 @@ function PerTagBarChart({ result }: { result: EvalResult }) {
                 width={barW}
                 height={barHeight}
                 rx={4}
-                fill="#6366f1"
+                fill="var(--brand)"
               />
               <text
                 x={labelW + chartW + 8}
                 y={y + barHeight / 2 + 4}
-                fill="#cbd5e1"
+                fill="var(--text2)"
                 fontSize="12"
                 fontFamily="ui-monospace, monospace"
               >

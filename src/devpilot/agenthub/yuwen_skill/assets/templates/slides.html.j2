@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ meta.title }}{% if meta.periods and meta.periods > 1 %} · 第{{ period }}课时{% endif %}</title>
+<style>{{ include_css() }}</style>
+</head>
+<body>
+<div class="progress"></div>
+<div class="deck">
+{% for slide in slides %}
+  <section class="slide{% if slide.kind == 'cover' or slide.kind == 'end' %} cover{% endif %}" id="{{ slide.id }}">
+    {% if slide.kind not in ['cover','end'] %}
+    <div class="title-bar">
+      <span>{{ slide.title }}</span>
+      {% if meta.periods and meta.periods > 1 %}<span class="period-tag">第 {{ slide.period|default(1) }} 课时</span>{% endif %}
+    </div>
+    {% endif %}
+    {% if slide.kind == 'cover' %}
+      <div class="cover-title">{{ slide.title }}</div>
+      <div class="cover-sub">{{ meta.textbook }} · {{ meta.lessonType }}</div>
+      {% if meta.periods and meta.periods > 1 %}<div class="cover-period">第 {{ slide.period|default(1) }} 课时</div>{% endif %}
+    {% endif %}
+    <div class="content">
+    {% for el in slide.elements %}
+      {{ render_element(el)|safe }}
+    {% endfor %}
+    </div>
+  </section>
+{% endfor %}
+</div>
+
+<div class="nav">
+  <button class="prev">◀ 上一页</button>
+  <span class="counter">1 / {{ slides|length }}</span>
+  <button class="next">下一页 ▶</button>
+</div>
+
+<script>{{ include_js() }}</script>
+</body>
+</html>

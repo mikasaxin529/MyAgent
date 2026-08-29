@@ -32,3 +32,4 @@ tmp_*.py
 
 # TS 构建缓存
 *.tsbuildinfo
+/outputs/

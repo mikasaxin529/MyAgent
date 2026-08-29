@@ -49,7 +49,7 @@ def make_call_model_after_tool_node(gateway, registry=None, emitter=None):
                               chunk.reasoning, idx)
             if chunk.delta:
                 content += chunk.delta
-                emit(emitter, {"type": "content", "delta": chunk.delta, "step_index": idx})
+                emit(emitter, {"type": "content", "delta": chunk.delta, "step_id": "call_model_after_tool"})
             if chunk.tool_call_delta:
                 _merge_tool_delta(acc, chunk.tool_call_delta, emitter, idx)
 

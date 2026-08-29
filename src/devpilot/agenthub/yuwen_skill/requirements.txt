@@ -1,0 +1,6 @@
+# 小学语文课件/教案生成器依赖
+# 用法：pip install -r requirements.txt
+python-pptx>=1.0.2   # 生成 .pptx 课件
+python-docx>=1.1.0   # 生成 .docx 教案
+Jinja2>=3.1.0        # 渲染 HTML 互动课件
+Pillow>=10.0.0       # 预渲染识字卡/田字格/注音行 PNG

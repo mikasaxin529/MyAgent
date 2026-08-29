@@ -8,9 +8,9 @@ import SkillsPage from "./pages/Skills";
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex h-full w-full bg-slate-950 text-slate-100">
+      <div className="app-frame">
         <Sidebar />
-        <main className="flex-1 min-w-0 overflow-hidden">
+        <div className="main-content">
           <Routes>
             <Route path="/" element={<ChatPage />} />
             <Route path="/run" element={<RunPage />} />
@@ -18,7 +18,7 @@ export default function App() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </main>
+        </div>
       </div>
     </BrowserRouter>
   );

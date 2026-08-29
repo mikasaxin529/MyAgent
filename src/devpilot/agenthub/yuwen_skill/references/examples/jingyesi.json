@@ -1,0 +1,140 @@
+{
+  "version": "1.0",
+  "meta": {
+    "title": "静夜思",
+    "grade": 1,
+    "lessonType": "古诗词",
+    "textbook": "部编版一年级下册",
+    "periods": 1,
+    "coreCompetencies": ["文化自信", "语言运用", "思维能力", "审美创造"],
+    "objectives": [
+      { "content": "认识\"夜、思、床、光、疑、举、望、低、故\"9个生字", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "正确流利有感情地朗读古诗，背诵古诗", "competency": "语言运用", "dimension": "过程与方法" },
+      { "content": "能借助拼音读准字音，读出古诗的节奏", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "体会诗人思念故乡的情感，感受古诗的韵律美", "competency": "文化自信", "dimension": "情感态度与价值观" }
+    ],
+    "keyPoints": ["识字，朗读背诵古诗", "读出古诗节奏"],
+    "difficulties": ["体会诗人思念故乡的情感", "读出古诗的韵律与停顿"]
+  },
+  "slides": [
+    {
+      "id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "静夜思", "size": "h1" },
+        { "type": "paragraph", "content": "唐 · 李白", "emphasize": [] },
+        { "type": "image", "src": "", "caption": "明月思乡" }
+      ]
+    },
+    {
+      "id": "s02", "kind": "intro", "title": "诗人背景", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "走近诗人", "size": "h1" },
+        { "type": "paragraph", "content": "李白，唐代伟大诗人，被称为\"诗仙\"。他离开家乡，远游在外，一个安静的夜晚，看到天上的明月，想起了远方的故乡，写下了这首《静夜思》。", "emphasize": [{"start": 2, "end": 4}] }
+      ]
+    },
+    {
+      "id": "s03", "kind": "read-rhythm", "title": "初读 · 正音节奏", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "初读节奏", "size": "h1" },
+        { "type": "poem", "title": "静夜思", "author": "李白", "stanzas": [
+          { "lines": [
+            { "text": "床前明月光", "ruby": "chuáng qián míng yuè guāng" },
+            { "text": "疑是地上霜", "ruby": "yí shì dì shàng shuāng" },
+            { "text": "举头望明月", "ruby": "jǔ tóu wàng míng yuè" },
+            { "text": "低头思故乡", "ruby": "dī tóu sī gù xiāng" }
+          ]}
+        ]}
+      ]
+    },
+    {
+      "id": "s04", "kind": "word-cards", "title": "我会认", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "我会认", "size": "h1" },
+        { "type": "word-card", "cards": [
+          { "char": "夜", "pinyin": "yè", "radical": "夕", "strokes": 8, "strokeOrder": ["点","横","撇","竖","横折","横","横","撇","捺"], "groups": ["夜晚","黑夜"], "sentence": "静夜思。" },
+          { "char": "思", "pinyin": "sī", "radical": "心", "strokes": 9, "strokeOrder": ["竖","横折","横","横","点","斜钩","点","点","点"], "groups": ["思念","思乡"], "sentence": "低头思故乡。" },
+          { "char": "床", "pinyin": "chuáng", "radical": "广", "strokes": 7, "strokeOrder": ["点","横","撇","横","竖","撇","捺"], "groups": ["床前","小床"], "sentence": "床前明月光。" },
+          { "char": "望", "pinyin": "wàng", "radical": "王", "strokes": 11, "strokeOrder": ["点","横","竖提","点","横","横","竖","横","竖折","横","竖弯钩"], "groups": ["望明月","看望"], "sentence": "举头望明月。" }
+        ]}
+      ]
+    },
+    {
+      "id": "s05", "kind": "meaning", "title": "诗意解析", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "诗意解析", "size": "h1" },
+        { "type": "paragraph", "content": "床前明月光：明亮的月光照在床前。", "emphasize": [{"start": 0, "end": 5}] },
+        { "type": "paragraph", "content": "疑是地上霜：好像是地上结了一层白霜。", "emphasize": [{"start": 4, "end": 8}] },
+        { "type": "paragraph", "content": "举头望明月：抬起头，望着天上的明月。", "emphasize": [{"start": 0, "end": 2}] },
+        { "type": "paragraph", "content": "低头思故乡：低下头，思念起远方的故乡。", "emphasize": [{"start": 4, "end": 8}] }
+      ]
+    },
+    {
+      "id": "s06", "kind": "feeling", "title": "悟情意象", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "悟情意象", "size": "h1" },
+        { "type": "paragraph", "content": "月亮，常勾起人们的思乡之情。李白看到明月，由\"疑霜\"到\"望月\"再到\"思乡\"，情感层层深入。", "emphasize": [{"start": 10, "end": 14}] },
+        { "type": "discussion", "question": "你离开过家吗？想家的时候是什么感觉？", "hint": "联系生活体会诗人的思乡之情。", "form": "同桌互说" }
+      ]
+    },
+    {
+      "id": "s07", "kind": "recite", "title": "背诵指导", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "背诵指导 · 填空背", "size": "h1" },
+        { "type": "paragraph", "content": "床前明（  ），疑是地上（  ）。举头望明（  ），低头思（  ）。", "emphasize": [] },
+        { "type": "ruby-line", "text": "举头望明月，低头思故乡。", "ruby": "jǔ tóu wàng míng yuè dī tóu sī gù xiāng" }
+      ]
+    },
+    {
+      "id": "s08", "kind": "extend", "title": "拓展对比", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "拓展 · 同类积累", "size": "h1" },
+        { "type": "list", "items": ["《咏鹅》骆宾王", "《悯农》李绅", "《古朗月行》李白"], "ordered": false },
+        { "type": "paragraph", "content": "课后读一读这些古诗，比一比哪首也写了月亮。", "emphasize": [] }
+      ]
+    },
+    {
+      "id": "s09", "kind": "board", "title": "板书设计", "period": 1,
+      "elements": [
+        { "type": "heading", "content": "板书设计", "size": "h1" },
+        { "type": "board", "title": "静夜思", "structure": [
+          { "node": "所见：明月光 → 疑是霜", "children": [] },
+          { "node": "所感：举头望 → 低头思", "children": [] },
+          { "node": "情感：思乡之情", "children": [] }
+        ]}
+      ]
+    }
+  ],
+  "lessonPlan": {
+    "title": "静夜思",
+    "base": { "textbook": "部编版一年级下册", "grade": "一年级", "periods": "1", "lessonType": "古诗词" },
+    "objectives": [
+      { "content": "认识9个生字", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "正确流利有感情朗读背诵", "competency": "语言运用", "dimension": "过程与方法" },
+      { "content": "读出古诗节奏", "competency": "语言运用", "dimension": "知识与技能" },
+      { "content": "体会思乡之情，感受古诗韵律美", "competency": "文化自信", "dimension": "情感态度与价值观" }
+    ],
+    "keyPoints": ["识字，朗读背诵古诗", "读出古诗节奏"],
+    "difficulties": ["体会诗人思乡之情", "读出古诗韵律与停顿"],
+    "preparation": "多媒体课件、生字卡片、配乐音频",
+    "periods": "1课时",
+    "teachingProcess": [
+      { "phase": "一、导入", "duration": "3-5分钟", "activities": [{"teacher": "出示明月图，简介李白，谈话导入。", "student": "观察图片，了解诗人背景。"}], "design": "设计意图：创设情境，走近诗人，激发诵读兴趣。" },
+      { "phase": "二、初读正音", "duration": "8-10分钟", "activities": [{"teacher": "范读，出示注音古诗，引导自由朗读，注意节奏停顿。", "student": "自由读，指名读，互评正音。"}], "design": "设计意图：读准字音，读出节奏，为理解诗意铺垫。" },
+      { "phase": "三、识字", "duration": "5-8分钟", "activities": [{"teacher": "出示生字卡，引导认读组词。", "student": "认读生字，组词造句。"}], "design": "设计意图：落实识字，随文识字效果好。" },
+      { "phase": "四、品读悟情", "duration": "8-10分钟", "activities": [{"teacher": "逐句讲解诗意，引导想象画面，体会思乡之情。", "student": "想象画面，有感情朗读。"}], "design": "设计意图：图文结合，入情入境，体会情感。" },
+      { "phase": "五、背诵积累", "duration": "5-8分钟", "activities": [{"teacher": "引导填空背、拍手背、配乐背。", "student": "多种形式背诵。"}], "design": "设计意图：熟读成诵，积累语言。" }
+    ],
+    "boardDesign": { "structure": "静夜思：所见 明月光→疑是霜；所感 举头望→低头思；情感 思乡之情" },
+    "homework": { "levels": [
+      { "level": "基础", "items": ["背诵《静夜思》", "认读9个生字"] },
+      { "level": "拓展", "items": ["读一首李白的诗"] }
+    ]},
+    "reflection": ""
+  },
+  "handout": {
+    "levels": [
+      { "level": "基础", "items": ["背诵《静夜思》", "认读9个生字"] },
+      { "level": "拓展", "items": ["读一首李白的诗"] }
+    ]
+  }
+}

@@ -25,7 +25,9 @@ from __future__ import annotations
 # 标准库
 import asyncio
 import json
+import mimetypes
 import queue as _queue
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -35,7 +37,7 @@ try:
     from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
-    from starlette.responses import StreamingResponse
+    from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 except ImportError as exc:  # pragma: no cover - 仅缺依赖时触发
     raise ImportError(
         "Web 层依赖未安装，请运行：pip install -e \".[web]\""
@@ -50,25 +52,12 @@ from .runtime import build_runtime, build_registry
 
 
 # ----------------------------------------------------------------------
-# Chat graph 帧协议（/ws/chat）
-# ----------------------------------------------------------------------
-# ChatGPT 式流式聊天的 WS 帧类型，与前端 FlowGraph + Chat 页共同遵守：
-#   {type:"route",   route, reason}        — router 节点判出的路由 + 理由
-#   {type:"reasoning", delta}              — 推理模型的思考过程增量（reasoning_content）
-#   {type:"token",    delta}               — 正文 token 增量（逐字渲染）
-#   {type:"node",     node_id, status}     — 节点 running/done（图形流高亮）
-#   {type:"blackboard", data}              — dev 分支黑板快照（plan/code_diff/...）
-#   {type:"step",     step}               — 中间步骤（搜索词/搜索结果等，进思考区）
-#   {type:"done",     answer, meta}        — 终帧
-#   {type:"error",    message}             — 错误
-# ----------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------
 # 请求/响应模型（Pydantic）
 # ----------------------------------------------------------------------
 class ChatRequest(BaseModel):
     prompt: str
+    history: list[dict] = []
+    agent: str = "general"
 
 
 # ----------------------------------------------------------------------
@@ -83,6 +72,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# 交付物落盘根目录（契约 3.4）：src/devpilot/web/api.py -> parents[3] = 项目根
+OUTPUTS_DIR = Path(__file__).resolve().parents[3] / "outputs"
 
 
 def _eval_path(rel: str) -> str:
@@ -117,6 +110,17 @@ async def health() -> dict:
         "fallback": gw._fallback,
         "chain": gw._pick_chain(),
     }
+
+
+# ----------------------------------------------------------------------
+# REST：智能体列表（AgentHub 注册中心）
+# ----------------------------------------------------------------------
+@app.get("/api/agents")
+async def agents() -> dict:
+    """列出注册中心发现的所有智能体（前端选择器下拉填充）。"""
+    from ..agenthub import list_agents
+
+    return {"agents": [m.to_dict() for m in list_agents()]}
 
 
 # ----------------------------------------------------------------------
@@ -192,163 +196,6 @@ async def eval_run() -> dict:
     return metrics.to_dict()
 
 
-# ----------------------------------------------------------------------
-# WebSocket：ChatGPT 式流式聊天（驱动 langgraph 编排图）
-# ----------------------------------------------------------------------
-@app.websocket("/ws/chat")
-async def ws_chat(websocket: WebSocket) -> None:
-    """流式聊天：接收 {prompt}，驱动 langgraph 图，逐帧推送。
-
-    与 /ws/run 的区别：
-    - /ws/run：跑原 orchestrator 顺序流水线（plan→coder→review→test）+ 审批握手，
-      后台线程执行（同步 orch.run）。
-    - /ws/chat：跑 langgraph 编排图（router→chat/websearch/dev 分支），全 async，
-      emitter 把 token/reasoning/node/route/blackboard/step 帧投到 event_q，
-      本处理函数 async for 图状态更新同时 drain event_q 推前端。
-
-    设计：
-    - graph 节点内调 gateway.stream_chat 逐 token yield，经 emitter 投 event_q。
-    - graph.astream 在事件循环里 async 迭代（不阻塞），每个状态更新也投 event_q
-      作 blackboard 快照（dev 分支有用）。
-    - 用 asyncio.create_task 跑图的 astream 消费循环，主循环同时 drain 推 WS，
-      实现"图产出事件"与"WS 推送"的并发。
-    """
-    await websocket.accept()
-    try:
-        # 1) 等客户端发 {prompt, history?}（history 为连续对话历史，首轮为空）
-        raw = await websocket.receive_text()
-        try:
-            req = json.loads(raw)
-        except Exception:
-            req = {}
-        prompt = req.get("prompt", "")
-        history = req.get("history", []) or []
-        if not prompt:
-            await websocket.send_json({"type": "error", "message": "empty prompt"})
-            return
-
-        # 2) 装配 chat graph 运行时
-        from ..graph import build_chat_graph_runtime
-        event_q: asyncio.Queue = asyncio.Queue()
-        # chat 路径默认用普通 ApprovalGate（非交互环境默认拒绝高危动作，
-        # 保证安全）。如需 web 审批握手，可在此注入 WebApprovalGate + 队列握手。
-        gw, registry, audit, approval, graph, set_emitter = build_chat_graph_runtime()
-        # 注入 emitter：节点产出的帧投到 event_q（async queue，线程安全）。
-        # 注意：graph 节点是 async 的，跑在事件循环线程，emitter 也在同线程调用。
-        def _emit(frame: dict) -> None:
-            try:
-                event_q.put_nowait(frame)
-            except Exception:  # noqa: BLE001
-                pass
-        set_emitter(_emit)
-
-        # 2.5) 历史压缩：用 Memory 把前端发来的对话历史压缩（超 token 预算三段式
-        # 摘要：首 system + 最近 6 条原文 + 中间 LLM 摘要），拼成
-        # [system, ...历史, user(当前prompt)] 多轮 messages 喂 graph，实现连续对话。
-        from ..runtime import Memory
-        from ..graph.nodes import SYSTEM_CHAT
-        mem = Memory(max_tokens=8000)
-        mem.set_summarizer(gw)
-        for m in history:
-            if isinstance(m, dict):
-                mem.add(m.get("role", "user"), str(m.get("content", "")))
-        compressed = mem.to_messages()
-        if any(
-            isinstance(m, dict) and "[历史摘要]" in m.get("content", "")
-            for m in compressed
-        ):
-            _emit({"type": "reasoning",
-                   "delta": "[系统] 已将早期对话压缩为摘要，保留最近 6 条原文。\n"})
-        messages_for_graph = (
-            [{"role": "system", "content": SYSTEM_CHAT}]
-            + compressed
-            + [{"role": "user", "content": prompt}]
-        )
-
-        # 3) 后台任务：驱动 graph.astream。动态图的关键帧（plan/node/token/
-        # step/reasoning）已由各节点的 emitter 直接投 event_q；这里再把每步
-        # 状态更新里的 step_results 快照投一份，供前端思考区展示中间产出。
-        # 同时追踪 state 里的 final_answer：天气/websearch 等不调 LLM 的分支
-        # 不产 token 帧，done.answer 需从 state 兜底（direct/planner 路径
-        # 已有 token 流累加，优先用 token）。
-        state_final = {"fa": ""}
-        async def _run_graph() -> None:
-            try:
-                async for chunk in graph.astream({"task": prompt, "messages": messages_for_graph}):
-                    for node_id, update in chunk.items():
-                        if not isinstance(update, dict):
-                            continue
-                        # 动态编排：把每步产出作快照投递（前端思考区/黑板区展示）。
-                        if "step_results" in update:
-                            _emit({"type": "blackboard", "data": {
-                                "step_results": update["step_results"],
-                                "step_index": update.get("step_index", 0),
-                            }})
-                        if "plan_steps" in update:
-                            _emit({"type": "blackboard", "data": {
-                                "plan_steps": update["plan_steps"],
-                            }})
-                        if update.get("final_answer"):
-                            state_final["fa"] = update["final_answer"]
-            except Exception as exc:  # noqa: BLE001
-                _emit({"type": "error", "message": repr(exc)})
-            finally:
-                _emit({"type": "_graph_done"})
-
-        task = asyncio.create_task(_run_graph())
-
-        # 4) 主循环：drain event_q 推 WS，直到图跑完。
-        final_answer = ""
-        while True:
-            try:
-                frame = await asyncio.wait_for(event_q.get(), timeout=0.1)
-            except asyncio.TimeoutError:
-                if task.done():
-                    break
-                continue
-            # 内部哨兵：图跑完。
-            if frame.get("type") == "_graph_done":
-                break
-            if frame.get("type") == "error":
-                await websocket.send_json(frame)
-                break
-            # token 帧累加 final_answer（供 done 帧返回）。
-            if frame.get("type") == "token":
-                final_answer += frame.get("delta", "")
-            await websocket.send_json(frame)
-
-        # 5) 取图最终状态（final_answer 在 state 里）。
-        try:
-            final_state = await task
-        except Exception as exc:  # noqa: BLE001
-            await websocket.send_json({"type": "error", "message": repr(exc)})
-            return
-
-        # token 流优先（direct/planner 路径逐字累加）；为空时用 state 的
-        # final_answer 兜底（天气/websearch 等不调 LLM 的分支）。
-        if not final_answer and state_final["fa"]:
-            final_answer = state_final["fa"]
-
-        # 6) 终帧 done。
-        await websocket.send_json({
-            "type": "done",
-            "answer": final_answer,
-            "meta": {
-                "nodes_visited": [],
-                "audit_total": len(audit.entries()) if hasattr(audit, "entries") else 0,
-            },
-        })
-
-    except WebSocketDisconnect:
-        return
-    except Exception as exc:  # noqa: BLE001
-        try:
-            await websocket.send_json({"type": "error", "message": repr(exc)})
-        except Exception:  # noqa: BLE001
-            pass
-
-
-# ----------------------------------------------------------------------
 # SSE：ChatFlow 式流式聊天（POST /api/chat → text/event-stream）
 # ----------------------------------------------------------------------
 def _sse(obj: dict) -> str:
@@ -356,16 +203,54 @@ def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
+# 通用对话图节点 → 步骤显示名映射（时间线用）
+_GENERAL_STEP_LABELS: dict[str, str] = {
+    "route_model": "路由判断",
+    "planner": "规划步骤",
+    "call_model": "模型推理",
+    "tools": "工具调用",
+    "call_model_after_tool": "综合推理",
+    "reflector": "反思",
+    "save_response": "保存回答",
+    "extract_memory": "提取记忆",
+    "compress_memory": "压缩记忆",
+}
+
+
+def _wrap_emitter_for_steps(
+    inner_emit: Any,
+    step_labels: dict[str, str],
+) -> Any:
+    """包装 emitter，在原有 node 帧旁同时发射 step 帧（时间线用）。
+
+    node 帧（type="node"）由 cf/base.py 的 visit()/done() 发出；
+    本包装将其转换为 step 帧（type="step"），供右侧 Timeline 组件渲染。
+    """
+    def _emit(frame: dict) -> None:
+        t = frame.get("type")
+        if t == "node":
+            node_id = frame.get("node_id", "")
+            status = frame.get("status", "")
+            label = step_labels.get(node_id, node_id)
+            step_frame: dict = {
+                "type": "step",
+                "id": node_id,
+                "label": label,
+                "status": status,
+                "ts": time.time(),
+            }
+            inner_emit(step_frame)
+        inner_emit(frame)
+    return _emit
+
+
 @app.post("/api/chat")
 async def chat_sse(request: Request) -> StreamingResponse:
-    """SSE 流式聊天：POST {prompt, history?}，返 text/event-stream。
+    """SSE 流式聊天：POST {prompt, history?, agent?}，返 text/event-stream。
 
-    与 /ws/chat 的区别：用 SSE（fetch+ReadableStream）替代 WS，推 ChatFlow 式
-    细粒度帧（thinking/content/route/plan/tool_call/tool_call_start/tool_call_args/
-    tool_result/search_item/reflection/status/memory/node/done/error）。前端 processLine
-    按 type dispatch 到 onXxx 回调，渲染 think-block/tool-block-sources/ai-content。
-
-    历史压缩、graph 装配复用 /ws/chat 同款逻辑（build_chat_graph_runtime + Memory）。
+    支持多智能体路由：agent 字段指定智能体 id（默认 "general"）。
+    通用对话走现有 ChatFlow 图（build_chat_graph），
+    其他智能体走其 graph.py 导出的 build_graph()。
     """
     try:
         body = await request.json()
@@ -373,17 +258,27 @@ async def chat_sse(request: Request) -> StreamingResponse:
         body = {}
     prompt = (body.get("prompt") or "").strip() if isinstance(body, dict) else ""
     history = body.get("history", []) if isinstance(body, dict) else []
+    agent_id = body.get("agent", "general") if isinstance(body, dict) else "general"
     if not prompt:
         async def _err():
             yield _sse({"type": "error", "message": "empty prompt"})
         return StreamingResponse(_err(), media_type="text/event-stream")
 
-    from ..graph import build_chat_graph_runtime
+    # 1) 查注册中心获取智能体
+    from ..agenthub import get_agent
+    agent = get_agent(agent_id)
+    if agent is None or agent.graph_fn is None:
+        async def _err():
+            yield _sse({"type": "error", "message": f"unknown agent: {agent_id}"})
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    from ..gateway import build_default_gateway
+    from .runtime import build_registry
+    from ..governance.audit import AuditLog
     from ..runtime import Memory
     from ..graph.nodes import SYSTEM_CHAT
 
     event_q: asyncio.Queue = asyncio.Queue()
-    gw, registry, audit, _approval, graph, set_emitter = build_chat_graph_runtime()
 
     def _emit(frame: dict) -> None:
         try:
@@ -391,25 +286,52 @@ async def chat_sse(request: Request) -> StreamingResponse:
         except Exception:  # noqa: BLE001
             pass
 
-    set_emitter(_emit)
+    # 2) 构造运行时依赖
+    gw = build_default_gateway()
+    registry = build_registry()
+    audit = AuditLog()
 
-    # 历史压缩：复用 /ws/chat 的 Memory 三段式摘要。
+    # 3) 构建智能体图（注入 emitter，节点产出帧投 event_q）
+    # 通用对话图额外包装 step 帧发射（时间线）
+    if agent_id == "general":
+        inner_emit = _wrap_emitter_for_steps(_emit, _GENERAL_STEP_LABELS)
+    else:
+        inner_emit = _emit
+
+    graph = agent.graph_fn(
+        gateway=gw, registry=registry, audit=audit, emitter=inner_emit,
+    )
+
+    # 4) 历史压缩：Memory 三段式摘要
     mem = Memory(max_tokens=8000)
     mem.set_summarizer(gw)
     for m in history:
         if isinstance(m, dict):
             mem.add(m.get("role", "user"), str(m.get("content", "")))
     compressed = mem.to_messages()
-    if any(isinstance(m, dict) and "[历史摘要]" in m.get("content", "") for m in compressed):
+    if any(
+        isinstance(m, dict) and "[历史摘要]" in m.get("content", "")
+        for m in compressed
+    ):
         _emit({"type": "thinking", "node": "system", "phase": "content",
                "delta": "[系统] 已将早期对话压缩为摘要，保留最近 6 条原文。\n"})
-    messages_for_graph = (
-        [{"role": "system", "content": SYSTEM_CHAT}]
-        + compressed
-        + [{"role": "user", "content": prompt}]
-    )
+    messages_for_graph = compressed + [{"role": "user", "content": prompt}]
+    # 仅 managed_system=True 的智能体（general）由端点注入 SYSTEM_CHAT。
+    # 其他智能体（如 yuwen_skill）由图自管 system 消息，避免双 system 冲突。
+    if agent.managed_system:
+        messages_for_graph.insert(0, {"role": "system", "content": SYSTEM_CHAT})
 
     state_final = {"fa": ""}
+
+    # 5) 先发 agent_meta 帧（智能体信息，前端渲染顶栏）
+    _emit({
+        "type": "agent_meta",
+        "agent_id": agent.agent_id,
+        "display_name": agent.display_name,
+        "description": agent.description,
+        "identity_color": agent.identity_color,
+        "placeholder": agent.placeholder,
+    })
 
     async def _run_graph() -> None:
         try:
@@ -428,6 +350,8 @@ async def chat_sse(request: Request) -> StreamingResponse:
 
     async def event_stream():
         final_answer = ""
+        nodes_visited: list[str] = []
+        saw_done = False
         while True:
             try:
                 frame = await asyncio.wait_for(event_q.get(), timeout=0.1)
@@ -441,16 +365,32 @@ async def chat_sse(request: Request) -> StreamingResponse:
             if t == "error":
                 yield _sse(frame)
                 break
-            if t == "content":
+            # 图节点已发 done 帧（如 yuwen report）时，不再追加终帧，避免双 done
+            if t == "done":
+                saw_done = True
+                yield _sse(frame)
+                continue
+            # final_answer 累加：同时覆盖 content 与 token 两种正文帧
+            if t in ("content", "token"):
                 final_answer += frame.get("delta", "")
+            # 追踪已访问节点（step 帧 running 时记录）
+            if t == "step" and frame.get("status") == "running":
+                nid = frame.get("id", "")
+                if nid and nid not in nodes_visited:
+                    nodes_visited.append(nid)
             yield _sse(frame)
-        # 终帧 done。
-        if not final_answer and state_final["fa"]:
+        # 终帧 done：图节点未发 done 时由本端点兜底。优先用 state 的
+        # final_answer（图节点如 report 或 save_response 已提供干净摘要），
+        # 其次回退到累加的 token 正文（direct_chat 等不设 final_answer 的路径）。
+        if saw_done:
+            return
+        if state_final["fa"]:
             final_answer = state_final["fa"]
         yield _sse({
             "type": "done",
             "answer": final_answer,
             "meta": {
+                "nodes_visited": nodes_visited,
                 "audit_total": len(audit.entries()) if hasattr(audit, "entries") else 0,
             },
         })
@@ -582,6 +522,38 @@ async def ws_run(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "error", "message": repr(exc)})
         except Exception:  # noqa: BLE001
             pass
+
+
+# ----------------------------------------------------------------------
+# 文件服务：交付物静态文件下载（防目录穿越）
+# 必须在 SPA 兜底路由之前注册，防止 /files/... 被 {full_path:path} 捕获。
+# ----------------------------------------------------------------------
+@app.get("/files/{agent_id}/{session}/{filename:path}")
+async def serve_file(agent_id: str, session: str, filename: str) -> Any:
+    """交付物静态文件下载。
+
+    安全要点：
+    - 用 Path.resolve() 解析完整路径后断言 is_relative_to(OUTPUTS_DIR)
+    - 仅允许白名单根目录（OUTPUTS_DIR）下的文件
+    - filename 经 URL 解码后参与路径拼接
+    """
+    from urllib.parse import unquote
+
+    safe_agent = Path(agent_id).as_posix()
+    safe_session = Path(session).as_posix()
+    safe_file = Path(unquote(filename)).as_posix()
+    # 拒绝任何含路径分隔符的段（防 agent_id 穿越）
+    if "/" in safe_agent or "\\" in safe_agent:
+        return JSONResponse(status_code=400, content={"error": "invalid agent_id"})
+    requested = (OUTPUTS_DIR / safe_agent / safe_session / safe_file).resolve()
+    try:
+        requested.relative_to(OUTPUTS_DIR.resolve())
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "path traversal denied"})
+    if not requested.is_file():
+        return JSONResponse(status_code=404, content={"error": "file not found"})
+    mime_type, _ = mimetypes.guess_type(str(requested))
+    return FileResponse(str(requested), media_type=mime_type or "application/octet-stream")
 
 
 # ----------------------------------------------------------------------
