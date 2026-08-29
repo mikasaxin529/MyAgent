@@ -76,8 +76,9 @@ esac
 #   2. 下载 Caddy（国内走 ghfast.top 镜像）：
 #      curl -sL -o /tmp/caddy.gz https://ghfast.top/https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_amd64.tar.gz
 #      tar xzf /tmp/caddy.gz -C /tmp caddy && install -m 755 /tmp/caddy /usr/local/bin/caddy
-#   3. /etc/caddy/Caddyfile:
-#      duoduo-qi.cn, www.duoduo-qi.cn {
+#   3. /etc/caddy/Caddyfile（域名列表改动后 systemctl reload caddy，
+#      新增域名会自动签发证书）:
+#      duoduo-qi.cn, www.duoduo-qi.cn, ai.duoduo-qi.cn {
 #          encode gzip
 #          reverse_proxy 127.0.0.1:8000 { flush_interval -1 }
 #      }
