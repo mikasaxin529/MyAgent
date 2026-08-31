@@ -49,11 +49,6 @@ export default function SessionList({
                 <span className="sg-dot" style={{ background: group.identityColor }} />
                 {group.displayName}
               </div>
-              {group.sessions.length === 0 && (
-                <div className="session-item" onClick={() => onNewSession(group.agentId)}>
-                  <span className="si-new">+ 新会话</span>
-                </div>
-              )}
               {group.sessions.map((sess) => (
                 <div
                   key={sess.id}
