@@ -33,16 +33,21 @@ export default function MessageBubble({ message, identityColor, isLast, onRegene
     );
   }
 
-  const hasThoughts = message.reasoning.length > 0 || message.steps.length > 0;
+  // 服务端历史消息可能缺 reasoning/steps/files 字段（探针/迁移数据），
+  // 渲染前兜底为空值，避免一条坏消息把整个应用崩掉
+  const reasoning = message.reasoning ?? "";
+  const steps = message.steps ?? [];
+  const files = message.files ?? [];
+  const hasThoughts = reasoning.length > 0 || steps.length > 0;
 
   return (
     <div className="msg ai">
       <div className="body">
         {hasThoughts && (
           <ThoughtBlock
-            reasoning={message.reasoning}
-            steps={message.steps}
-            files={message.files}
+            reasoning={reasoning}
+            steps={steps}
+            files={files}
             identityColor={identityColor}
           />
         )}
@@ -59,9 +64,9 @@ export default function MessageBubble({ message, identityColor, isLast, onRegene
             <Bot size={13} className="animate-pulse" /> 生成中…
           </p>
         )}
-        {message.files.length > 0 && (
+        {files.length > 0 && (
           <div className="files">
-            {message.files.map((f, i) => (
+            {files.map((f, i) => (
               <FileCard key={i} file={f} onDownload={downloadFile} />
             ))}
           </div>

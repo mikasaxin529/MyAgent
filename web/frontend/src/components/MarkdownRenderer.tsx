@@ -1,4 +1,4 @@
-import { useState, isValidElement, type ReactNode } from "react";
+import { useState, useEffect, useRef, isValidElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -21,7 +21,7 @@ function nodeText(node: ReactNode): string {
   return "";
 }
 
-/** Markdown 渲染：精致排版 + 代码块（语言标签/复制/语法高亮）。 */
+/** Markdown 渲染：精致排版 + 代码块（语言标签/复制/语法高亮）+ Mermaid 图表。 */
 export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
   return (
     <div className="prose-custom">
@@ -40,9 +40,14 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
             }
             const match = /language-(\w+)/.exec(className || "");
             const lang = match ? match[1] : "code";
+            const text = nodeText(children);
+            // mermaid 代码块 → 画图，不当文本渲染
+            if (lang === "mermaid") {
+              return <MermaidBlock chart={text} />;
+            }
             // children 原样渲染（保留高亮 span），复制用提取出的纯文本
             return (
-              <CodeBlock lang={lang} text={nodeText(children)}>
+              <CodeBlock lang={lang} text={text}>
                 {children}
               </CodeBlock>
             );
@@ -70,6 +75,65 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         {content}
       </ReactMarkdown>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Mermaid 图表：\`\`\`mermaid 围栏渲染为 SVG 流程图/时序图/甘特图等。
+// 业内主流（ChatGPT/千问/Kimi/Notion AI）对架构、流程类回答都给可视化图，
+// 前提是 prompt 里告诉模型可以用 mermaid（见 cf/base.py 排版要求）。
+// ----------------------------------------------------------------------
+function MermaidBlock({ chart }: { chart: string }) {
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState("");
+  const idRef = useRef(`mmd-${Math.random().toString(36).slice(2, 9)}`);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mermaid = (await import("mermaid")).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: document.documentElement.getAttribute("data-theme") === "dark"
+            ? "dark" : "default",
+          fontFamily: "inherit",
+          // 跟随应用字号，避免图里文字过大
+          fontSize: 13,
+        });
+        const { svg } = await mermaid.render(idRef.current, chart.trim());
+        if (!cancelled) {
+          setSvg(svg);
+          setError("");
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chart]);
+
+  if (error) {
+    // 渲染失败退化为普通代码块，内容不丢
+    return (
+      <CodeBlock lang="mermaid" text={chart}>
+        <code>{chart}</code>
+      </CodeBlock>
+    );
+  }
+  if (!svg) {
+    return (
+      <div className="mermaid-box mermaid-loading">
+        <span>图表生成中…</span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="mermaid-box"
+      // mermaid.render 输出自家 SVG；内容源自本地模型输出（同 markdown 信任级别）
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   );
 }
 

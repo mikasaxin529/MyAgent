@@ -587,25 +587,36 @@ body {
 .session-item .si-del:hover { color: var(--err); background: var(--sunken); }
 
 /* ---- Markdown prose ---- */
-.prose-custom { max-width: none; line-height: 1.75; }
+.prose-custom { max-width: none; line-height: 1.78; }
 .prose-custom > *:first-child { margin-top: 0 !important; }
 .prose-custom > *:last-child { margin-bottom: 0 !important; }
-.prose-custom p { margin: 0 0 12px; }
-.prose-custom strong { font-weight: 700; color: var(--text); }
+.prose-custom p { margin: 0 0 13px; }
+/* 加粗：用品牌色微调，扫读时关键词自动跳出（主题变量随明暗切换） */
+.prose-custom strong { font-weight: 700; color: var(--brand-deep); }
 .prose-custom em { font-style: italic; }
 .prose-custom a { color: var(--brand); text-decoration: underline; text-underline-offset: 2px; }
 .prose-custom a:hover { color: var(--brand-deep); }
 .prose-custom ul, .prose-custom ol {
-  margin: 10px 0; padding-left: 1.5em;
+  margin: 12px 0; padding-left: 1.4em;
   list-style-position: outside;
 }
-.prose-custom ul { list-style: disc; }
+.prose-custom ul { list-style: none; padding-left: 1.25em; }
+/* 自绘要点：小圆点用品牌色，比默认 disc 更精致 */
+.prose-custom ul > li { position: relative; }
+.prose-custom ul > li::before {
+  content: ""; position: absolute; left: -0.95em; top: 0.62em;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--brand, #615CED); opacity: 0.55;
+}
 .prose-custom ol { list-style: decimal; }
-.prose-custom li { margin: 4px 0; line-height: 1.7; }
-.prose-custom li::marker { color: var(--text3); font-size: 0.9em; }
+.prose-custom li { margin: 5px 0; line-height: 1.72; }
+.prose-custom li::marker { color: var(--brand, #615CED); font-size: 0.9em; font-weight: 600; }
 .prose-custom li > p { margin: 0; }
 .prose-custom li > ul, .prose-custom li > ol { margin: 4px 0; }
 .prose-custom ul ul { list-style: circle; }
+/* 连续段落后的首个列表 / 列表后的段落：多一点呼吸感 */
+.prose-custom p + ul, .prose-custom p + ol { margin-top: 8px; }
+.prose-custom ul + p, .prose-custom ol + p { margin-top: 10px; }
 .prose-custom blockquote {
   border-left: 3px solid var(--line-strong); padding: 2px 0 2px 14px;
   margin: 12px 0; color: var(--text2);
@@ -639,6 +650,23 @@ body {
   font-size: 0.84em; color: var(--brand-deep);
   word-break: break-all;
 }
+
+/* ---- Mermaid 图表卡：与代码块同款容器，居中可横向滚 ---- */
+.mermaid-box {
+  margin: 14px 0; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--cb-line);
+  background: var(--cb-bg);
+  padding: 16px 14px; display: flex; justify-content: center;
+  align-items: center; min-height: 80px;
+}
+.mermaid-box svg { max-width: 100%; height: auto; }
+/* 超宽图（时序图多角色）横向滚动，不撑破消息列 */
+.mermaid-box { overflow-x: auto; }
+.mermaid-loading {
+  color: var(--text3); font-size: 12.5px; gap: 8px;
+}
+/* mermaid 自产 SVG 内部的文字色继承应用主题（dark 下不是纯黑） */
+.mermaid-box .edgeLabel, .mermaid-box text { fill: var(--text2); }
 
 /* ---- 代码块（千问式）：浅灰底跟随主题 + 顶栏语言标签/复制 ---- */
 .codeblock {
