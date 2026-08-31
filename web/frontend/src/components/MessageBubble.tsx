@@ -14,6 +14,14 @@ export interface MessageBubbleProps {
 
 /** 单条消息：助手无气泡署名式全宽排版，用户气泡右对齐。 */
 export default function MessageBubble({ message, identityColor, agentName, onChipClick }: MessageBubbleProps) {
+  const [copied, setCopied] = useState(false);
+  function copyContent() {
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
   if (message.role === "user") {
     return (
       <div className="msg user">
@@ -23,13 +31,6 @@ export default function MessageBubble({ message, identityColor, agentName, onChi
   }
 
   const hasThoughts = message.reasoning.length > 0 || message.steps.length > 0;
-  const [copied, setCopied] = useState(false);
-  function copyContent() {
-    navigator.clipboard.writeText(message.content).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }
 
   const timeStr = message.ts
     ? new Date(message.ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
@@ -93,12 +94,6 @@ export default function MessageBubble({ message, identityColor, agentName, onChi
             ))}
           </div>
         )}
-        {message.done && message.meta && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-            <MetaCard label="流程" value={(message.meta.nodes_visited ?? []).join(" → ")} />
-            <MetaCard label="Audit" value={`${message.meta.audit_total}`} />
-          </div>
-        )}
         {Array.isArray(message.chips) && message.chips.length > 0 && (
           <div className="chips">
             {message.chips.map((c, i) => (
@@ -115,32 +110,26 @@ export default function MessageBubble({ message, identityColor, agentName, onChi
           </div>
         )}
       </div>
+      {/* ChatGPT 式右下角悬浮操作条：hover 消息时出现，元信息在左、复制在右 */}
       {message.content && (
-        <button
-          onClick={copyContent}
-          className="flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] transition"
-          style={{
-            marginTop: 8,
-            cursor: "pointer",
-            fontFamily: "inherit",
-            color: "var(--text2)",
-            background: "var(--bg)",
-            borderColor: "var(--line)",
-          }}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? "已复制" : "复制"}
-        </button>
+        <div className="msg-actions">
+          {message.done && message.meta && (
+            <span className="ma-meta" title="节点执行路径与审计步数">
+              {(message.meta.nodes_visited ?? []).join(" → ")}
+              <i>·</i>
+              Audit {message.meta.audit_total}
+            </span>
+          )}
+          <span className="ma-spacer" />
+          <button
+            onClick={copyContent}
+            className="ma-btn"
+            title={copied ? "已复制" : "复制回答"}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
       )}
-    </div>
-  );
-}
-
-function MetaCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="px-3 py-2 rounded-md" style={{ background: "var(--sunken)", border: "1px solid var(--line)" }}>
-      <div style={{ color: "var(--text3)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
-      <div style={{ color: "var(--text2)", fontSize: 13, marginTop: 2 }}>{value}</div>
     </div>
   );
 }

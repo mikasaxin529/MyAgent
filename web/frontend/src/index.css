@@ -249,8 +249,39 @@ body {
 .msg.ai .author .mini-seal.neutral { background: var(--brand); }
 .msg.ai .author b { font-size: 13px; font-weight: 700; }
 .msg.ai .author time { font-size: 11px; color: var(--text3); font-family: "JetBrains Mono", monospace; }
-.msg.ai .body { font-size: 14.5px; color: var(--text); overflow-wrap: anywhere; }
+.msg.ai .body { font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
 .msg.ai .body p { margin: 0 0 10px; }
+
+/* ---- 消息操作条（参考 ChatGPT/DeepSeek：hover 出现、无边框灰色图标、
+       hover 带浅色圆底）：默认隐藏；sticky bottom 让长回答滚动时
+       操作条始终贴在视口底部 ---- */
+.msg-actions {
+  position: sticky; bottom: 4px;
+  display: flex; align-items: center; gap: 4px;
+  margin-top: 10px;
+  opacity: 0; transform: translateY(2px);
+  transition: opacity .15s, transform .15s;
+  pointer-events: none;
+}
+.msg.ai:hover .msg-actions, .msg-actions:focus-within {
+  opacity: 1; transform: none; pointer-events: auto;
+}
+.msg-actions .ma-meta {
+  font-size: 11px; color: var(--text3);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 3px 8px; max-width: 60%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.msg-actions .ma-meta i { font-style: normal; margin: 0 5px; color: var(--line-strong); }
+.msg-actions .ma-spacer { flex: 1; }
+.msg-actions .ma-btn {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 7px;
+  border: none; background: transparent; color: var(--text3);
+  cursor: pointer; transition: .12s;
+}
+.msg-actions .ma-btn:hover { color: var(--text); background: var(--sunken); }
 
 .think-line {
   display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
@@ -528,28 +559,108 @@ body {
 .session-item .si-new { color: var(--brand); font-weight: 700; }
 
 /* ---- Markdown prose ---- */
-.prose-custom { max-width: none; }
-.prose-custom p { margin: 0 0 10px; }
-.prose-custom p:last-child { margin-bottom: 0; }
+.prose-custom { max-width: none; line-height: 1.75; }
+.prose-custom > *:first-child { margin-top: 0 !important; }
+.prose-custom > *:last-child { margin-bottom: 0 !important; }
+.prose-custom p { margin: 0 0 12px; }
+.prose-custom strong { font-weight: 700; color: var(--text); }
+.prose-custom em { font-style: italic; }
 .prose-custom a { color: var(--brand); text-decoration: underline; text-underline-offset: 2px; }
 .prose-custom a:hover { color: var(--brand-deep); }
-.prose-custom ul { list-style: disc; list-style-position: outside; margin-left: 1.25rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
-.prose-custom ol { list-style: decimal; list-style-position: outside; margin-left: 1.25rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
-.prose-custom li { margin-bottom: 0.25rem; }
-.prose-custom blockquote { border-left: 2px solid var(--brand); padding-left: 0.75rem; margin: 0.5rem 0; color: var(--text2); }
-.prose-custom h1 { font-size: 1.125rem; font-weight: 700; margin: 1rem 0 0.5rem; }
-.prose-custom h2 { font-size: 1rem; font-weight: 700; margin: 0.75rem 0 0.5rem; }
-.prose-custom h3 { font-size: 0.9375rem; font-weight: 700; margin: 0.75rem 0 0.25rem; }
-.prose-custom table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; }
-.prose-custom th { padding: 0.5rem 0.75rem; background: var(--sunken); font-weight: 600; text-align: left; border: 1px solid var(--line); }
-.prose-custom td { padding: 0.5rem 0.75rem; border: 1px solid var(--line); }
-.prose-custom hr { margin: 1rem 0; border: none; border-top: 1px solid var(--line); }
+.prose-custom ul, .prose-custom ol {
+  margin: 10px 0; padding-left: 1.5em;
+  list-style-position: outside;
+}
+.prose-custom ul { list-style: disc; }
+.prose-custom ol { list-style: decimal; }
+.prose-custom li { margin: 4px 0; line-height: 1.7; }
+.prose-custom li::marker { color: var(--text3); font-size: 0.9em; }
+.prose-custom li > p { margin: 0; }
+.prose-custom li > ul, .prose-custom li > ol { margin: 4px 0; }
+.prose-custom ul ul { list-style: circle; }
+.prose-custom blockquote {
+  border-left: 3px solid var(--line-strong); padding: 2px 0 2px 14px;
+  margin: 12px 0; color: var(--text2);
+}
+.prose-custom blockquote p { margin: 0 0 6px; }
+.prose-custom blockquote p:last-child { margin-bottom: 0; }
+.prose-custom h1, .prose-custom h2, .prose-custom h3,
+.prose-custom h4, .prose-custom h5, .prose-custom h6 {
+  font-family: "Fraunces", "Songti SC", serif;
+  color: var(--text); line-height: 1.35;
+  margin: 1.4em 0 0.6em; text-wrap: balance;
+}
+.prose-custom h1 { font-size: 1.5em; font-weight: 700; }
+.prose-custom h2 { font-size: 1.28em; font-weight: 700; }
+.prose-custom h3 { font-size: 1.12em; font-weight: 600; }
+.prose-custom h4, .prose-custom h5, .prose-custom h6 { font-size: 1.02em; font-weight: 600; }
+.prose-custom h1:first-child, .prose-custom h2:first-child, .prose-custom h3:first-child { margin-top: 0.2em; }
+.prose-custom .md-table-wrap { overflow-x: auto; margin: 14px 0; border-radius: 8px; border: 1px solid var(--line); }
+.prose-custom table { width: 100%; border-collapse: collapse; font-size: 0.93em; }
+.prose-custom th {
+  padding: 8px 12px; background: var(--sunken); font-weight: 600; text-align: left;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.prose-custom td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.prose-custom tr:last-child td { border-bottom: none; }
+.prose-custom tbody tr:hover { background: var(--panel); }
+.prose-custom hr { margin: 1.4rem 0; border: none; border-top: 1px solid var(--line); }
 .prose-custom code:not([class*="language-"]) {
   background: var(--sunken); padding: 0.125rem 0.375rem;
   border-radius: 4px; font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.85em;
+  font-size: 0.84em; color: var(--brand-deep);
+  word-break: break-all;
 }
-.prose-custom pre {
-  margin: 0.75rem 0; border-radius: 8px; overflow: hidden;
+
+/* ---- 代码块（ChatGPT 式）：深色底 + 顶栏语言标签/复制 ---- */
+.codeblock {
+  margin: 14px 0; border-radius: 10px; overflow: hidden;
   border: 1px solid var(--line);
+  background: #1a2332; /* 代码块固定深底（两主题一致），类似 ChatGPT */
 }
+.codeblock .cb-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 14px; background: #141c29; border-bottom: 1px solid #253044;
+}
+.codeblock .cb-lang {
+  font-size: 11px; color: #7d8ca3; text-transform: uppercase; letter-spacing: .06em;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+.codeblock .cb-copy {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; color: #9aa9bf; background: transparent;
+  border: none; cursor: pointer; padding: 2px 6px; border-radius: 5px;
+  font-family: inherit; transition: .12s;
+}
+.codeblock .cb-copy:hover { color: #e2e9f4; background: #223049; }
+.codeblock .cb-pre {
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+  font-size: 13px; line-height: 1.65; max-height: 420px; overflow-y: auto;
+}
+.codeblock .cb-pre code { font-family: "JetBrains Mono", ui-monospace, monospace; background: none; padding: 0; }
+/* 深底代码块内 token 配色（覆盖上面基于 light token 的默认值） */
+.codeblock .hljs { color: #c9d5e5; }
+.codeblock .hljs-keyword, .codeblock .hljs-selector-tag, .codeblock .hljs-literal, .codeblock .hljs-doctag { color: #ff7b72; }
+.codeblock .hljs-string, .codeblock .hljs-regexp, .codeblock .hljs-addition, .codeblock .hljs-template-tag { color: #a5d6ff; }
+.codeblock .hljs-number, .codeblock .hljs-symbol, .codeblock .hljs-bullet, .codeblock .hljs-link { color: #79c0ff; }
+.codeblock .hljs-title, .codeblock .hljs-title.function_, .codeblock .hljs-name { color: #d2a8ff; font-weight: 500; }
+.codeblock .hljs-attr, .codeblock .hljs-attribute, .codeblock .hljs-property, .codeblock .hljs-variable, .codeblock .hljs-selector-attr { color: #79c0ff; }
+.codeblock .hljs-comment, .codeblock .hljs-quote { color: #8b98a9; font-style: italic; }
+.codeblock .hljs-built_in, .codeblock .hljs-type, .codeblock .hljs-class { color: #ffa657; }
+.codeblock .hljs-meta, .codeblock .hljs-punctuation { color: #8b98a9; }
+.codeblock .hljs-deletion { color: #ffa198; }
+
+/* ---- highlight.js token colors（本仓库只用 rehype-highlight 做 token 分类，
+       主题 CSS 一直没导入 → 代码全是无色。这里按设计 token 自绘双主题） ---- */
+.hljs { color: var(--text2); }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: var(--seal); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-tag { color: var(--ok); }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--run); }
+.hljs-title, .hljs-title.function_, .hljs-name { color: var(--brand); font-weight: 600; }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-selector-attr { color: var(--brand-deep); }
+.hljs-comment, .hljs-quote { color: var(--text3); font-style: italic; }
+.hljs-built_in, .hljs-type, .hljs-class { color: var(--brand-deep); }
+.hljs-meta, .hljs-punctuation { color: var(--text3); }
+.hljs-deletion { color: var(--err); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }

@@ -57,6 +57,14 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
               </a>
             );
           },
+          // 表格外包一层：宽表格横向滚动，不撑破消息列
+          table({ children }) {
+            return (
+              <div className="md-table-wrap">
+                <table>{children}</table>
+              </div>
+            );
+          },
         }}
       >
         {content}
@@ -75,18 +83,19 @@ function CodeBlock({ lang, text, children }: { lang: string; text: string; child
     });
   }
   return (
-    <div className="my-3 rounded-lg overflow-hidden border border-[var(--line)] bg-[var(--sunken)]">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--panel)] border-b border-[var(--line)]">
-        <span className="text-[11px] text-[var(--text3)] font-mono">{lang}</span>
+    <div className="codeblock">
+      <div className="cb-head">
+        <span className="cb-lang">{lang}</span>
         <button
           onClick={copy}
-          className="flex items-center gap-1 text-[11px] text-[var(--text3)] hover:text-[var(--text2)] transition"
+          className="cb-copy"
+          title={copied ? "已复制" : "复制代码"}
         >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? <Check size={13} /> : <Copy size={13} />}
           {copied ? "已复制" : "复制"}
         </button>
       </div>
-      <pre className="overflow-x-auto px-4 py-3 text-[13px] leading-relaxed max-h-[420px] overflow-y-auto">
+      <pre className="cb-pre">
         <code className={`hljs language-${lang}`}>{children}</code>
       </pre>
     </div>
