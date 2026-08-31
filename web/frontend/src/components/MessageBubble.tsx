@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, Bot } from "lucide-react";
+import { Check, Copy, RotateCw, Bot } from "lucide-react";
 import type { Message } from "../api";
 import MarkdownRenderer from "./MarkdownRenderer";
 import ThoughtBlock from "./ThoughtBlock";
@@ -8,12 +8,14 @@ import FileCard from "./FileCard";
 export interface MessageBubbleProps {
   message: Message;
   identityColor?: string;
-  agentName?: string;
+  /** 是否是最后一条消息（决定挂不挂"重新生成"） */
+  isLast?: boolean;
+  onRegenerate?: () => void;
   onChipClick?: (text: string) => void;
 }
 
-/** 单条消息：助手无气泡署名式全宽排版，用户气泡右对齐。 */
-export default function MessageBubble({ message, identityColor, agentName, onChipClick }: MessageBubbleProps) {
+/** 单条消息（千问式）：助手无头像无署名全宽平铺，用户浅灰气泡右对齐。 */
+export default function MessageBubble({ message, identityColor, isLast, onRegenerate, onChipClick }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
   function copyContent() {
     navigator.clipboard.writeText(message.content).then(() => {
@@ -32,39 +34,8 @@ export default function MessageBubble({ message, identityColor, agentName, onChi
 
   const hasThoughts = message.reasoning.length > 0 || message.steps.length > 0;
 
-  const timeStr = message.ts
-    ? new Date(message.ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-    : "";
-
-  // ---- think-line: "思考 N 秒 · 末步骤名" from step timestamps ----
-  const thinkLine = (() => {
-    if (message.steps.length === 0) return null;
-    const doneSteps = message.steps.filter((s) => s.status === "done");
-    if (doneSteps.length === 0) return null;
-    const firstTs = Math.min(...message.steps.map((s) => s.ts));
-    const lastDone = doneSteps[doneSteps.length - 1];
-    const totalSec = (lastDone.ts - firstTs).toFixed(1);
-    return { totalSec, label: lastDone.label };
-  })();
-
   return (
     <div className="msg ai">
-      <div className="author">
-        <span className="mini-seal" style={{ background: identityColor ?? "var(--seal)" }}>
-          {agentName?.[0] ?? "AI"}
-        </span>
-        <b>{agentName ?? "智能体"}</b>
-        <time>{timeStr}</time>
-      </div>
-      {thinkLine && (
-        <div className="think-line">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 6v6l4 2" />
-          </svg>
-          思考 {thinkLine.totalSec}s · {thinkLine.label}
-        </div>
-      )}
       <div className="body">
         {hasThoughts && (
           <ThoughtBlock
@@ -110,24 +81,24 @@ export default function MessageBubble({ message, identityColor, agentName, onChi
           </div>
         )}
       </div>
-      {/* ChatGPT 式右下角悬浮操作条：hover 消息时出现，元信息在左、复制在右 */}
-      {message.content && (
+      {/* 千问式操作条：正文下方左对齐灰色图标组，完成后出现 */}
+      {message.content && message.done && (
         <div className="msg-actions">
-          {message.done && message.meta && (
+          <button onClick={copyContent} className="ma-btn" title={copied ? "已复制" : "复制"}>
+            {copied ? <Check size={16} /> : <Copy size={16} />}
+          </button>
+          {isLast && onRegenerate && (
+            <button onClick={onRegenerate} className="ma-btn" title="重新生成">
+              <RotateCw size={16} />
+            </button>
+          )}
+          {message.meta && (
             <span className="ma-meta" title="节点执行路径与审计步数">
               {(message.meta.nodes_visited ?? []).join(" → ")}
               <i>·</i>
               Audit {message.meta.audit_total}
             </span>
           )}
-          <span className="ma-spacer" />
-          <button
-            onClick={copyContent}
-            className="ma-btn"
-            title={copied ? "已复制" : "复制回答"}
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-          </button>
         </div>
       )}
     </div>

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, MessageSquare } from "lucide-react";
-import "highlight.js/styles/github-dark.css";
 import MessageBubble from "../components/MessageBubble";
 import Composer from "../components/Composer";
 import Timeline, { type TrackedStep } from "../components/Timeline";
@@ -21,7 +20,7 @@ const DEFAULT_AGENT: AgentManifest = {
   id: "general",
   display_name: "通用对话",
   description: "默认助手：搜索、写代码、规划多步任务",
-  identity_color: "#3D6CC4",
+  identity_color: "#615CED",
   placeholder: "输入需求，如「帮我总结7月最新AI资讯」",
 };
 
@@ -89,7 +88,7 @@ export default function ChatPage() {
         groups.push({
           agentId: aid,
           displayName: am?.display_name ?? aid,
-          identityColor: am?.identity_color ?? "#3D6CC4",
+          identityColor: am?.identity_color ?? "#615CED",
           sessions: grp.sessions.map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt })),
         });
       }
@@ -200,11 +199,12 @@ export default function ChatPage() {
 
   // ---- Send message ----
   const handleSend = useCallback(
-    (text: string) => {
+    (text: string, base?: Message[]) => {
       const agentId = currentAgent.id;
       // 同智能体串行：上一条还在跑就拒绝再发；不同智能体可并行。
       if (runningRef.current.has(agentId)) return;
-      const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const msgs = base ?? messages;
+      const history = msgs.map((m) => ({ role: m.role, content: m.content }));
       const startSid = sidRef.current || null;
 
       const userMsg: Message = {
@@ -215,7 +215,7 @@ export default function ChatPage() {
       };
 
       // 流私有状态：即使切走会话/智能体，帧也只写进它自己这份数组。
-      let streamMsgs: Message[] = [...messages, userMsg, assistantMsg];
+      let streamMsgs: Message[] = [...msgs, userMsg, assistantMsg];
       let mySid = startSid ?? "";
       let mySteps: TrackedStep[] = [];
       let myFiles: FileItemType[] = [];
@@ -310,6 +310,16 @@ export default function ChatPage() {
     [messages, currentAgent.id, agents],
   );
 
+  // ---- 重新生成（千问式）：截掉最后一条 assistant 回复，重发上一条用户消息 ----
+  const handleRegenerate = useCallback(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    const prev = messages[messages.length - 2];
+    if (!prev || prev.role !== "user") return;
+    if (runningRef.current.has(currentAgent.id)) return;
+    handleSend(prev.content, messages.slice(0, -1));
+  }, [messages, currentAgent.id, handleSend]);
+
   // ---- Agent select from composer：不中断任何流，切走后其结果仍写回自己会话 ----
   function handleAgentSelect(agentId: string) {
     if (agentId === currentAgent.id) return;
@@ -360,7 +370,8 @@ export default function ChatPage() {
               key={i}
               message={m}
               identityColor={currentAgent.identity_color}
-              agentName={m.role === "assistant" ? currentAgent.display_name : undefined}
+              isLast={i === messages.length - 1}
+              onRegenerate={handleRegenerate}
               onChipClick={(chipText) => composerRef.current?.fill(chipText)}
             />
           ))}
