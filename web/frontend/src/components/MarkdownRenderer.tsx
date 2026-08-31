@@ -101,13 +101,21 @@ function MermaidBlock({ chart }: { chart: string }) {
           // 跟随应用字号，避免图里文字过大
           fontSize: 13,
         });
+        // 先 parse 预检：v11 对非法语法不一定抛异常，而是返回内嵌
+        // "Syntax error in text" 错误框的 SVG——parse 阶段就能拦住，
+        // 降级为代码块让用户看到原文而不是红色错误框
+        await mermaid.parse(chart.trim());
         const { svg } = await mermaid.render(idRef.current, chart.trim());
+        // render 成功仍可能是错误框（parse 漏网的边界情况），双保险
+        if (/syntax error in text|mermaid version/i.test(svg)) {
+          throw new Error("mermaid syntax error");
+        }
         if (!cancelled) {
           setSvg(svg);
           setError("");
         }
-      } catch (e) {
-        if (!cancelled) setError(String(e));
+      } catch {
+        if (!cancelled) setError("mermaid render failed");
       }
     })();
     return () => { cancelled = true; };
