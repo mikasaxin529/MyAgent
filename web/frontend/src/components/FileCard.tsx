@@ -1,5 +1,6 @@
 import { Download, Eye } from "lucide-react";
 import type { FileItem } from "../api";
+import { previewFile } from "../api";
 
 export interface FileCardProps {
   file: FileItem;
@@ -32,9 +33,9 @@ export default function FileCard({ file, onDownload }: FileCardProps) {
       </div>
       {file.mime.startsWith("text/html") ? (
         <>
-          <a className="dl ghost" href={file.path} target="_blank" rel="noreferrer" title="预览">
+          <button className="dl ghost" onClick={() => previewFile(file.path)} title="预览">
             <Eye />
-          </a>
+          </button>
           <button className="dl" onClick={() => onDownload(file.path)} title="下载">
             <Download />
           </button>

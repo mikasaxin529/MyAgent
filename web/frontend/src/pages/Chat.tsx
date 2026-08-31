@@ -10,6 +10,9 @@ import {
   loadSessions,
   saveAgentSession,
   getAgentSessions,
+  deleteAgentSession,
+  getLastAgent,
+  setLastAgent,
   type AgentManifest,
   type Message,
   type FileItem as FileItemType,
@@ -51,21 +54,26 @@ export default function ChatPage() {
 
   useEffect(() => { agentIdRef.current = currentAgent.id; }, [currentAgent.id]);
   useEffect(() => { sidRef.current = activeSessionId; }, [activeSessionId]);
+  // 偏好记录不放 effect（StrictMode remount 会用初始 general 覆写 localStorage），
+  // 改为在每个真实切换入口显式 setLastAgent，见 switchAgent / handleNewSession / handleSelectSession。
 
   const loading = (runningCount[currentAgent.id] ?? 0) > 0;
 
   // ---- Load agents on mount ----
+  // 偏好恢复：优先回到上次使用的智能体（localStorage），失效则回退 general。
   useEffect(() => {
     let cancelled = false;
     fetchAgents()
       .then((list) => {
         if (cancelled || list.length === 0) return;
-        const def = list.find((a) => a.id === "general") ?? list[0];
+        const last = getLastAgent();
+        const remembered = last ? list.find((a) => a.id === last) : undefined;
+        const def = remembered ?? list.find((a) => a.id === "general") ?? list[0];
         setAgents(list);
         switchAgent(def.id, list);
       })
       .catch(() => {
-        switchAgent("general");
+        switchAgent(getLastAgent() ?? "general");
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,6 +119,7 @@ export default function ChatPage() {
     const agent = list.find((a) => a.id === agentId) ?? DEFAULT_AGENT;
     setCurrentAgent(agent);
     agentIdRef.current = agentId;
+    setLastAgent(agent.id);
 
     const group = getAgentSessions(agentId);
     const sessList = group.sessions;
@@ -170,6 +179,7 @@ export default function ChatPage() {
       const agent = agents.find((a) => a.id === aid) ?? DEFAULT_AGENT;
       setCurrentAgent(agent);
       agentIdRef.current = aid;
+      setLastAgent(aid);
     }
     sidRef.current = "";
     setActiveSessionId("");
@@ -180,10 +190,11 @@ export default function ChatPage() {
   }
 
   // ---- Select session ----
-  function handleSelectSession(agentId: string, sessionId: string) {
+  function handleSelectSession(agentId: string, sessionId: string, keepOpen = false) {
     const agent = agents.find((a) => a.id === agentId) ?? DEFAULT_AGENT;
     setCurrentAgent(agent);
     agentIdRef.current = agentId;
+    setLastAgent(agentId);
     const group = getAgentSessions(agentId);
     const sess = group.sessions.find((s) => s.id === sessionId);
     if (sess) {
@@ -194,7 +205,31 @@ export default function ChatPage() {
       setSteps((lastAssistant?.steps as TrackedStep[] | undefined) ?? []);
       setFiles(lastAssistant?.files ?? []);
     }
-    setSessionListOpen(false);
+    if (!keepOpen) setSessionListOpen(false);
+  }
+
+  // ---- Delete session：正在跑流的会话不让删；删当前会话则清空视图 ----
+  function handleDeleteSession(agentId: string, sessionId: string) {
+    if (runningRef.current.has(agentId) && agentIdRef.current === agentId && sidRef.current === sessionId) {
+      window.alert("该会话正在生成回复，完成后再删除。");
+      return;
+    }
+    deleteAgentSession(agentId, sessionId);
+    if (agentIdRef.current === agentId && sidRef.current === sessionId) {
+      // 删的是正在看的会话：回到该智能体剩余的首条，或空新会话视图
+      const rest = getAgentSessions(agentId).sessions;
+      if (rest.length > 0) {
+        handleSelectSession(agentId, rest[0].id, true); // 面板保持打开，便于连续删除
+        rebuildSessionList(agentIdRef.current); // 列表内容变了，须重建（handleSelectSession 不做这件事）
+        return;
+      }
+      sidRef.current = "";
+      setActiveSessionId("");
+      setMessages([]);
+      setSteps([]);
+      setFiles([]);
+    }
+    rebuildSessionList(agentIdRef.current);
   }
 
   // ---- Send message ----
@@ -407,6 +442,7 @@ export default function ChatPage() {
           activeAgentId={currentAgent.id}
           activeSessionId={activeSessionId}
           onSelectSession={handleSelectSession}
+          onDeleteSession={handleDeleteSession}
           onNewSession={(agentId) => handleNewSession(agentId)}
           onClose={() => setSessionListOpen(false)}
         />

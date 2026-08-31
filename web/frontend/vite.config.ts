@@ -17,6 +17,11 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
       },
+      // 交付物文件（/files/<agent>/<session>/<name>）也走后端，否则 dev 下下载 404
+      "/files": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
 });

@@ -97,6 +97,52 @@ export function saveAgentSession(agentId: string, group: AgentSessionGroup): voi
   saveSessions(store);
 }
 
+/** 删除某个智能体下的一条会话。删掉的是当前激活会话时，activeIndex 收敛到 0（或空组）。 */
+export function deleteAgentSession(agentId: string, sessionId: string): void {
+  const store = loadSessions();
+  const group = store[agentId];
+  if (!group) return;
+  const wasActive = group.sessions[Math.min(group.activeIndex, group.sessions.length - 1)]?.id === sessionId;
+  group.sessions = group.sessions.filter((s) => s.id !== sessionId);
+  if (wasActive) group.activeIndex = group.sessions.length > 0 ? 0 : -1;
+  else if (group.activeIndex >= group.sessions.length) group.activeIndex = group.sessions.length - 1;
+  if (group.sessions.length === 0) delete store[agentId];
+  else store[agentId] = group;
+  saveSessions(store);
+}
+
+// ---- 用户偏好（记忆上次智能体） ----
+
+const LAST_AGENT_KEY = "dp_last_agent";
+
+export function getLastAgent(): string | null {
+  try {
+    return localStorage.getItem(LAST_AGENT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setLastAgent(agentId: string): void {
+  try {
+    localStorage.setItem(LAST_AGENT_KEY, agentId);
+  } catch {
+    // ignore
+  }
+}
+
+// ---- 交付物下载 / 预览 ----
+
+/** 触发浏览器下载（后端 /files 默认发 Content-Disposition: attachment）。 */
+export function downloadFile(path: string): void {
+  window.open(path, "_blank", "noopener");
+}
+
+/** HTML 课件浏览器内预览：?inline=1 让后端不发 attachment。 */
+export function previewFile(path: string): void {
+  window.open(path + (path.includes("?") ? "&" : "?") + "inline=1", "_blank", "noopener");
+}
+
 // ---- Theme storage ----
 
 const THEME_KEY = "dp_theme";

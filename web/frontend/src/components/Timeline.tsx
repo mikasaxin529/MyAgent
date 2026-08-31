@@ -1,5 +1,6 @@
 import { Check, Ellipsis, Circle } from "lucide-react";
 import type { StepItem, FileItem } from "../api";
+import { downloadFile } from "../api";
 import FileCard from "./FileCard";
 
 export interface TrackedStep extends StepItem {
@@ -94,7 +95,7 @@ export default function Timeline({ steps, files, totalTime, doneCount, isRunning
           </div>
           <div className="files">
             {files.map((f, i) => (
-              <FileCard key={i} file={f} onDownload={(path) => { window.open(path, "_blank"); }} />
+              <FileCard key={i} file={f} onDownload={downloadFile} />
             ))}
           </div>
         </>

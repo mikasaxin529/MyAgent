@@ -578,6 +578,13 @@ body {
 .session-item .si-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-item .si-time { font-size: 10px; color: var(--text3); font-family: ui-monospace, monospace; white-space: nowrap; }
 .session-item .si-new { color: var(--brand); font-weight: 700; }
+.session-item .si-del {
+  display: grid; place-items: center; width: 22px; height: 22px; flex-shrink: 0;
+  border: none; border-radius: 6px; background: transparent; color: var(--text3);
+  cursor: pointer; opacity: 0; transition: .12s;
+}
+.session-item:hover .si-del { opacity: 1; }
+.session-item .si-del:hover { color: var(--err); background: var(--sunken); }
 
 /* ---- Markdown prose ---- */
 .prose-custom { max-width: none; line-height: 1.75; }

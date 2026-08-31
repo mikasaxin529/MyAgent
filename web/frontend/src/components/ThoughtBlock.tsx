@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, Brain } from "lucide-react";
 import type { StepItem } from "../api";
+import { downloadFile } from "../api";
 import FileCard from "./FileCard";
 
 export interface ThoughtBlockProps {
@@ -55,7 +56,7 @@ export default function ThoughtBlock({ reasoning, steps, files }: ThoughtBlockPr
           {files.length > 0 && (
             <div className="files" style={{ marginTop: 4 }}>
               {files.map((f, i) => (
-                <FileCard key={i} file={f} onDownload={(p) => window.open(p, "_blank")} />
+                <FileCard key={i} file={f} onDownload={downloadFile} />
               ))}
             </div>
           )}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, RotateCw, Bot } from "lucide-react";
 import type { Message } from "../api";
+import { downloadFile } from "../api";
 import MarkdownRenderer from "./MarkdownRenderer";
 import ThoughtBlock from "./ThoughtBlock";
 import FileCard from "./FileCard";
@@ -61,7 +62,7 @@ export default function MessageBubble({ message, identityColor, isLast, onRegene
         {message.files.length > 0 && (
           <div className="files">
             {message.files.map((f, i) => (
-              <FileCard key={i} file={f} onDownload={(p) => window.open(p, "_blank")} />
+              <FileCard key={i} file={f} onDownload={downloadFile} />
             ))}
           </div>
         )}

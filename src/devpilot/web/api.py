@@ -530,8 +530,11 @@ async def ws_run(websocket: WebSocket) -> None:
 # 必须在 SPA 兜底路由之前注册，防止 /files/... 被 {full_path:path} 捕获。
 # ----------------------------------------------------------------------
 @app.get("/files/{agent_id}/{session}/{filename:path}")
-async def serve_file(agent_id: str, session: str, filename: str) -> Any:
+async def serve_file(agent_id: str, session: str, filename: str, inline: int = 0) -> Any:
     """交付物静态文件下载。
+
+    默认发 attachment（浏览器强制下载，filename 参数保证中文名不乱码）；
+    带 ?inline=1 时不发 Content-Disposition，供 HTML 课件浏览器内预览。
 
     安全要点：
     - 用 Path.resolve() 解析完整路径后断言 is_relative_to(OUTPUTS_DIR)
@@ -554,7 +557,11 @@ async def serve_file(agent_id: str, session: str, filename: str) -> Any:
     if not requested.is_file():
         return JSONResponse(status_code=404, content={"error": "file not found"})
     mime_type, _ = mimetypes.guess_type(str(requested))
-    return FileResponse(str(requested), media_type=mime_type or "application/octet-stream")
+    media = mime_type or "application/octet-stream"
+    if inline:
+        return FileResponse(str(requested), media_type=media)
+    # filename= 让 Starlette 发 Content-Disposition: attachment; filename*=utf-8''…
+    return FileResponse(str(requested), media_type=media, filename=requested.name)
 
 
 # ----------------------------------------------------------------------
