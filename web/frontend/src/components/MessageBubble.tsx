@@ -92,13 +92,6 @@ export default function MessageBubble({ message, identityColor, isLast, onRegene
               <RotateCw size={16} />
             </button>
           )}
-          {message.meta && (
-            <span className="ma-meta" title="节点执行路径与审计步数">
-              {(message.meta.nodes_visited ?? []).join(" → ")}
-              <i>·</i>
-              Audit {message.meta.audit_total}
-            </span>
-          )}
         </div>
       )}
     </div>
