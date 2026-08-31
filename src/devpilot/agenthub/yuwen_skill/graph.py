@@ -408,10 +408,11 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
                     "nodes_visited": visited,
                 }
 
-            # 校验 schema
-            from .scripts.common.schema import validate, SchemaError
+            # 校验 schema（先归一化：text/question/散装 word-card 等常见
+            # 模型偏差自动转换，转换不了的才报错重试）
+            from .scripts.common.schema import validate, normalize, SchemaError
             try:
-                doc = validate(doc)
+                doc = validate(normalize(doc))
                 # 校验通过
                 break
             except SchemaError as e:

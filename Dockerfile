@@ -1,9 +1,9 @@
 # DevPilot 一体化镜像：FastAPI 后端 + 托管前端 SPA（api.py 自动挂载 web/frontend/dist）
-# 基础镜像用 node:20-alpine-x86 / python:3.13-slim（D3A_TOOLKIT 离线包本地 load，
-# Docker Hub 不可达时不用改任何东西；有网时也可正常 pull 同名镜像）。
+# 基础镜像用标准名 node:20-alpine / python:3.13-slim；本地 Docker Hub 不可达时
+# 从 D3A_TOOLKIT 离线 tar load 后 tag 成同名即可，Dockerfile 不用改。
 
 # ---------- Stage 1: 前端构建 ----------
-FROM node:20-alpine-x86 AS webbuild
+FROM node:20-alpine AS webbuild
 WORKDIR /web
 # 先装依赖，源码改动不击穿这层缓存
 COPY web/frontend/package.json web/frontend/package-lock.json ./

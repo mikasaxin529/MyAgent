@@ -77,6 +77,90 @@ class SchemaError(Exception):
     """schema 校验失败。退出码 2。"""
 
 
+# ---- 归一化：模型常见偏差 → 合法 schema ---------------------------------
+# LLM 生成接近但非严格合规的结构（text→paragraph、question→discussion、
+# 散装 word-card→聚合 cards 等）。直接判失败会浪费一次完整生成，
+# 先尽力转换，转换不了的留给 validate 报精确错误。
+
+_TYPE_ALIASES = {
+    "text": "paragraph",        # 最常见：裸文本元素
+    "title": "heading",
+    "question": "discussion",
+    "audio": "note",            # schema 无 audio，语义最近的教师备注
+    "cover": "divider",
+    "ending": "divider",
+}
+
+def normalize(doc: dict) -> dict:
+    """就地归一化模型输出常见偏差，返回同一 doc。"""
+    # handout.content[{section,items}] → handout.levels[{level,items}]
+    ho = doc.get("handout")
+    if isinstance(ho, dict):
+        content = ho.pop("content", None)
+        if content is None:
+            content = ho.pop("sections", None)
+        if isinstance(content, list) and "levels" not in ho:
+            ho["levels"] = [
+                {"level": c.get("section") or c.get("level") or "基础",
+                 "items": c.get("items") or []}
+                for c in content if isinstance(c, dict)
+            ]
+
+    slides = doc.get("slides")
+    if not isinstance(slides, list):
+        return doc
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        # slides[].type → kind（schema 用 kind；模型爱写 type）
+        if "type" in slide and "kind" not in slide:
+            slide["kind"] = slide.pop("type")
+        # subtitle 合并进 title（封面副标题常见偏差）
+        sub = slide.pop("subtitle", None)
+        if sub and isinstance(sub, str) and sub.strip():
+            slide["title"] = f"{slide.get('title') or ''} {sub}".strip()
+        # period/totalPeriods 混写
+        if "totalPeriods" in slide:
+            slide.pop("totalPeriods")
+
+        elems = slide.get("elements")
+        if not isinstance(elems, list):
+            continue
+        merged_word_cards: list | None = None
+        for el in elems:
+            if not isinstance(el, dict):
+                continue
+            t = el.get("type")
+            # 类型别名替换
+            if t in _TYPE_ALIASES:
+                el["type"] = _TYPE_ALIASES[t]
+            # word-card: content=汉字 → char（模型常用 content）
+            if el.get("type") == "word-card" and "cards" not in el:
+                if "content" in el and "char" not in el:
+                    el["char"] = el.pop("content")
+            # 散装 word-card（每元素一张卡）→ 聚合进一个 cards[]
+            if el.get("type") == "word-card" and "cards" not in el:
+                card = {k: el[k] for k in
+                        ("char", "pinyin", "radical", "strokes", "strokeOrder",
+                         "structure", "groups", "example", "sentence")
+                        if k in el}
+                if "structure" in card and "radical" not in card:
+                    card["radical"] = card.pop("structure")
+                if "example" in card:
+                    card["groups"] = card.pop("example")
+                if card.get("char"):
+                    merged_word_cards = merged_word_cards or []
+                    merged_word_cards.append(card)
+        # word-card 元素只留一个聚合卡（cards[] 已被上面收集）
+        if merged_word_cards:
+            slide["elements"] = [
+                el for el in elems
+                if not (isinstance(el, dict)
+                        and el.get("type") == "word-card" and "cards" not in el)
+            ] + [{"type": "word-card", "cards": merged_word_cards}]
+    return doc
+
+
 def _err(msg: str):
     raise SchemaError(msg)
 
