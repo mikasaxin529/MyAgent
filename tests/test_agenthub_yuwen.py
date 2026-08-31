@@ -771,6 +771,108 @@ class TestSchema:
                 "slides": [{"id": "s01", "elements": [{"type": "unknown_type"}]}],
             })
 
+    def test_normalize_real_failure_doc(self):
+        """线上失败案例：《静夜思》模型输出偏差经 normalize 后通过校验。
+
+        复现 2026-08-31 生产失败：slides[].type、text/question/audio 元素、
+        散装 word-card（每元素一张卡）、handout.content 全是模型自创结构。
+        """
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        doc = {
+            "version": "1.0.0",
+            "meta": {
+                "title": "静夜思", "grade": 2, "subject": "语文",
+                "textbook": "部编版二年级上册", "lessonType": "古诗词",
+                "period": 1, "totalPeriods": 1,
+                "coreCompetencies": ["语言建构与运用", "思维发展与提升"],
+            },
+            "slides": [
+                {
+                    "id": 1, "type": "cover", "title": "静夜思", "subtitle": "——李白",
+                    "layout": "center",
+                    "elements": [
+                        {"type": "text", "content": "静夜思", "style": {"fontSize": 48}},
+                        {"type": "text", "content": "唐·李白", "style": {"fontSize": 24}},
+                        {"type": "image", "src": "moon_night", "alt": "明月夜图"},
+                    ],
+                },
+                {
+                    "id": 5, "type": "word-learning", "title": "生字学习（一）",
+                    "elements": [
+                        {"type": "word-card", "content": "静", "pinyin": "jìng",
+                         "stroke": 14, "structure": "左右结构", "example": "安静、宁静"},
+                        {"type": "word-card", "content": "夜", "pinyin": "yè",
+                         "stroke": 8, "structure": "上下结构", "example": "夜晚、黑夜"},
+                    ],
+                },
+                {
+                    "id": 11, "type": "discussion", "title": "互动讨论",
+                    "elements": [
+                        {"type": "question", "content": "诗人为什么看到月亮就会想起故乡？"},
+                        {"type": "text", "content": "提示：月亮代表团圆和思念。"},
+                    ],
+                },
+                {
+                    "id": 4, "type": "poem-reading", "title": "初读古诗",
+                    "elements": [
+                        {"type": "text", "content": "床前明月光，疑是地上霜。"},
+                        {"type": "audio", "src": "poem_recitation", "alt": "古诗朗读"},
+                    ],
+                },
+            ],
+            "lessonPlan": {"teachingObjectives": [], "teachingProcess": []},
+            "handout": {
+                "title": "学习单",
+                "content": [
+                    {"section": "我会读", "items": ["静夜思", "床前"]},
+                    {"section": "我会背", "items": ["床前明月光，疑是地上霜。"]},
+                ],
+            },
+        }
+        doc = normalize(doc)
+        validate(doc)  # 不抛即通过
+
+        # 类型别名已转换
+        types = [el["type"] for s in doc["slides"] for el in s["elements"]]
+        assert "text" not in types and "question" not in types and "audio" not in types
+        # 散装 word-card 聚合成单个 cards[]
+        cards = [el for s in doc["slides"] for el in s["elements"]
+                 if el["type"] == "word-card"]
+        assert len(cards) == 1
+        assert [c["char"] for c in cards[0]["cards"]] == ["静", "夜"]
+        # slides[].type → kind
+        assert all("kind" in s for s in doc["slides"])
+        # handout.content → levels
+        assert [l["level"] for l in doc["handout"]["levels"]] == ["我会读", "我会背"]
+
+    def test_normalize_leaves_valid_doc_untouched(self):
+        """已合规文档 normalize 后不变（幂等且不误伤）。"""
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        doc = {
+            "meta": {"title": "坐井观天", "grade": 2, "lessonType": "精读"},
+            "slides": [
+                {
+                    "id": "s01", "kind": "cover", "title": "坐井观天", "period": 1,
+                    "elements": [
+                        {"type": "heading", "content": "坐井观天", "size": "h1"},
+                        {"type": "word-card", "cards": [
+                            {"char": "井", "pinyin": "jǐng", "radical": "一",
+                             "strokes": 4, "groups": ["水井"], "sentence": "青蛙坐在井里。"},
+                        ]},
+                    ],
+                },
+            ],
+            "handout": {"levels": [{"level": "基础", "items": ["抄写生字"]}]},
+        }
+        import copy
+        before = copy.deepcopy(doc)
+        doc = normalize(doc)
+        validate(doc)
+        assert doc["slides"][0]["elements"] == before["slides"][0]["elements"]
+        assert doc["handout"] == before["handout"]
+
     def test_pinyin_split(self):
         """拼音拆分正确。"""
         from devpilot.agenthub.yuwen_skill.scripts.common.pinyin import split_syllables, tone_of
