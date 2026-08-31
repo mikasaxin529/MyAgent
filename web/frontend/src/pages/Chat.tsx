@@ -7,16 +7,18 @@ import SessionList from "../components/SessionList";
 import {
   chatSSE,
   fetchAgents,
-  loadSessions,
-  saveAgentSession,
-  getAgentSessions,
-  deleteAgentSession,
+  fetchStoredSessions,
+  fetchStoredSession,
+  putSession,
+  deleteStoredSession,
+  migrateLocalSessions,
   getLastAgent,
   setLastAgent,
   type AgentManifest,
   type Message,
   type FileItem as FileItemType,
   type SessionGroup,
+  type StoredSession,
 } from "../api";
 
 const DEFAULT_AGENT: AgentManifest = {
@@ -52,6 +54,11 @@ export default function ChatPage() {
   const sidRef = useRef<string>("");
   const runningRef = useRef<Set<string>>(new Set());
 
+  // 会话存储的服务端镜像：agentId → 摘要列表（按 updated_at 降序）。
+  // 读写都走 /api/sessions（后端 SQLite），本地不再持有全量消息——
+  // 选中会话时才 fetchStoredSession 拉全文。
+  const sessionIndexRef = useRef<Map<string, StoredSession[]>>(new Map());
+
   useEffect(() => { agentIdRef.current = currentAgent.id; }, [currentAgent.id]);
   useEffect(() => { sidRef.current = activeSessionId; }, [activeSessionId]);
   // 偏好记录不放 effect（StrictMode remount 会用初始 general 覆写 localStorage），
@@ -59,22 +66,34 @@ export default function ChatPage() {
 
   const loading = (runningCount[currentAgent.id] ?? 0) > 0;
 
-  // ---- Load agents on mount ----
+  // ---- Load agents + server sessions on mount ----
   // 偏好恢复：优先回到上次使用的智能体（localStorage），失效则回退 general。
+  // 会话索引来自服务端；首次使用则把 localStorage 旧会话一次性迁移上去。
   useEffect(() => {
     let cancelled = false;
-    fetchAgents()
-      .then((list) => {
+    (async () => {
+      try {
+        const list = await fetchAgents();
         if (cancelled || list.length === 0) return;
+        setAgents(list);
+        await migrateLocalSessions();
+        const stored = await fetchStoredSessions();
+        if (cancelled) return;
+        const idx = new Map<string, StoredSession[]>();
+        for (const s of stored) {
+          const arr = idx.get(s.agent_id) ?? [];
+          arr.push(s);
+          idx.set(s.agent_id, arr);
+        }
+        sessionIndexRef.current = idx;
         const last = getLastAgent();
         const remembered = last ? list.find((a) => a.id === last) : undefined;
         const def = remembered ?? list.find((a) => a.id === "general") ?? list[0];
-        setAgents(list);
-        switchAgent(def.id, list);
-      })
-      .catch(() => {
-        switchAgent(getLastAgent() ?? "general");
-      });
+        await switchAgent(def.id, list, idx);
+      } catch {
+        if (!cancelled) switchAgent(getLastAgent() ?? "general");
+      }
+    })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -86,20 +105,20 @@ export default function ChatPage() {
   }, [messages]);
 
   // ---- Rebuild session list (read-only snapshot for the drawer) ----
-  function rebuildSessionList(activeAgentId: string, agentList?: AgentManifest[]) {
+  function rebuildSessionList(activeAgentId: string, agentList?: AgentManifest[],
+                              idx?: Map<string, StoredSession[]>) {
     const list = agentList ?? agents;
-    const store = loadSessions();
+    const index = idx ?? sessionIndexRef.current;
     const groups: SessionGroup[] = [];
-    for (const [aid, grp] of Object.entries(store)) {
+    for (const [aid, sessList] of index.entries()) {
+      if (sessList.length === 0) continue;
       const am = list.find((a) => a.id === aid);
-      if (grp.sessions.length > 0) {
-        groups.push({
-          agentId: aid,
-          displayName: am?.display_name ?? aid,
-          identityColor: am?.identity_color ?? "#615CED",
-          sessions: grp.sessions.map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt })),
-        });
-      }
+      groups.push({
+        agentId: aid,
+        displayName: am?.display_name ?? aid,
+        identityColor: am?.identity_color ?? "#615CED",
+        sessions: sessList.map((s) => ({ id: s.id, title: s.title, updatedAt: s.updated_at })),
+      });
     }
     if (!groups.find((g) => g.agentId === activeAgentId)) {
       const cur = list.find((a) => a.id === activeAgentId) ?? DEFAULT_AGENT;
@@ -114,25 +133,31 @@ export default function ChatPage() {
   }
 
   // ---- Switch agent ----
-  function switchAgent(agentId: string, agentList?: AgentManifest[]) {
+  async function switchAgent(agentId: string, agentList?: AgentManifest[],
+                             idx?: Map<string, StoredSession[]>) {
     const list = agentList ?? agents;
     const agent = list.find((a) => a.id === agentId) ?? DEFAULT_AGENT;
     setCurrentAgent(agent);
     agentIdRef.current = agentId;
     setLastAgent(agent.id);
 
-    const group = getAgentSessions(agentId);
-    const sessList = group.sessions;
-    const activeIdx = group.activeIndex < sessList.length ? group.activeIndex : 0;
-    const activeSess = sessList[activeIdx] ?? null;
+    // 服务端索引里该智能体最近的一条会话（原 localStorage activeIndex 语义：
+    // 切回智能体时回到最近活跃的会话）。
+    const sessList = idx?.get(agentId) ?? sessionIndexRef.current.get(agentId) ?? [];
+    const activeSess = sessList[0] ?? null;
 
     if (activeSess) {
       sidRef.current = activeSess.id;
       setActiveSessionId(activeSess.id);
-      setMessages(activeSess.messages);
-      const lastAssistant = [...activeSess.messages].reverse().find((m) => m.role === "assistant");
-      setSteps((lastAssistant?.steps as TrackedStep[] | undefined) ?? []);
-      setFiles(lastAssistant?.files ?? []);
+      const full = await fetchStoredSession(activeSess.id);
+      // 切换期间用户又切走了：丢弃迟到结果
+      if (agentIdRef.current !== agentId) return;
+      if (full) {
+        setMessages(full.messages);
+        const lastAssistant = [...full.messages].reverse().find((m) => m.role === "assistant");
+        setSteps((lastAssistant?.steps as TrackedStep[] | undefined) ?? []);
+        setFiles(lastAssistant?.files ?? []);
+      }
     } else {
       sidRef.current = "";
       setActiveSessionId("");
@@ -140,29 +165,42 @@ export default function ChatPage() {
       setSteps([]);
       setFiles([]);
     }
-    rebuildSessionList(agentId, list);
+    rebuildSessionList(agentId, list, idx);
   }
 
   // ---- Persist messages for a given agent/session. 返回实际会话 id。
   //      只有"用户正看着这条会话"时才联动更新视图与 activeSessionId。 ----
   function persistFor(agentId: string, sid: string | null, msgs: Message[]): string {
-    const group = getAgentSessions(agentId);
     const title =
       msgs.length > 0 && msgs[0].role === "user"
         ? msgs[0].content.slice(0, 40)
         : "新对话";
 
     let finalSid = sid ?? "";
-    const idx = group.sessions.findIndex((s) => s.id === finalSid);
-    if (idx >= 0) {
-      group.sessions[idx] = { ...group.sessions[idx], title, messages: msgs, updatedAt: Date.now() / 1000 };
-      group.activeIndex = idx;
-    } else {
+    if (!finalSid) {
       finalSid = genId();
-      group.sessions = [{ id: finalSid, title, messages: msgs, updatedAt: Date.now() / 1000 }, ...group.sessions];
-      group.activeIndex = 0;
+      // 新会话：索引头部插入（本地立即反映，服务端稍后落盘）
+      const arr = sessionIndexRef.current.get(agentId) ?? [];
+      sessionIndexRef.current.set(agentId, [
+        { id: finalSid, agent_id: agentId, title, created_at: Date.now() / 1000, updated_at: Date.now() / 1000 },
+        ...arr,
+      ]);
+    } else {
+      // 更新索引里的 updated_at（重新排到最前）
+      const arr = sessionIndexRef.current.get(agentId) ?? [];
+      const hit = arr.find((s) => s.id === finalSid);
+      if (hit) {
+        hit.updated_at = Date.now() / 1000;
+        hit.title = title;
+        sessionIndexRef.current.set(
+          agentId,
+          [hit, ...arr.filter((s) => s.id !== finalSid)],
+        );
+      }
     }
-    saveAgentSession(agentId, group);
+
+    // 落服务端（fire-and-forget，失败静默）
+    void putSession(finalSid, agentId, title, msgs);
 
     if (agentIdRef.current === agentId && (sid === null || sid === "" || sid === sidRef.current)) {
       sidRef.current = finalSid;
@@ -190,18 +228,25 @@ export default function ChatPage() {
   }
 
   // ---- Select session ----
-  function handleSelectSession(agentId: string, sessionId: string, keepOpen = false) {
+  async function handleSelectSession(agentId: string, sessionId: string, keepOpen = false) {
     const agent = agents.find((a) => a.id === agentId) ?? DEFAULT_AGENT;
     setCurrentAgent(agent);
     agentIdRef.current = agentId;
     setLastAgent(agentId);
-    const group = getAgentSessions(agentId);
-    const sess = group.sessions.find((s) => s.id === sessionId);
-    if (sess) {
-      sidRef.current = sess.id;
-      setActiveSessionId(sess.id);
-      setMessages(sess.messages);
-      const lastAssistant = [...sess.messages].reverse().find((m) => m.role === "assistant");
+    sidRef.current = sessionId;
+    setActiveSessionId(sessionId);
+    // 索引里把选中项提到最前（原 activeIndex 语义的替身）
+    const arr = sessionIndexRef.current.get(agentId) ?? [];
+    const hit = arr.find((s) => s.id === sessionId);
+    if (hit) {
+      sessionIndexRef.current.set(agentId, [hit, ...arr.filter((s) => s.id !== sessionId)]);
+    }
+    const full = await fetchStoredSession(sessionId);
+    // 拉取期间用户已切走：丢弃迟到结果
+    if (agentIdRef.current !== agentId || sidRef.current !== sessionId) return;
+    if (full) {
+      setMessages(full.messages);
+      const lastAssistant = [...full.messages].reverse().find((m) => m.role === "assistant");
       setSteps((lastAssistant?.steps as TrackedStep[] | undefined) ?? []);
       setFiles(lastAssistant?.files ?? []);
     }
@@ -209,17 +254,21 @@ export default function ChatPage() {
   }
 
   // ---- Delete session：正在跑流的会话不让删；删当前会话则清空视图 ----
-  function handleDeleteSession(agentId: string, sessionId: string) {
+  async function handleDeleteSession(agentId: string, sessionId: string) {
     if (runningRef.current.has(agentId) && agentIdRef.current === agentId && sidRef.current === sessionId) {
       window.alert("该会话正在生成回复，完成后再删除。");
       return;
     }
-    deleteAgentSession(agentId, sessionId);
+    // 先改本地索引（立即反馈），再删服务端
+    const arr = sessionIndexRef.current.get(agentId) ?? [];
+    sessionIndexRef.current.set(agentId, arr.filter((s) => s.id !== sessionId));
+    void deleteStoredSession(sessionId);
+
     if (agentIdRef.current === agentId && sidRef.current === sessionId) {
       // 删的是正在看的会话：回到该智能体剩余的首条，或空新会话视图
-      const rest = getAgentSessions(agentId).sessions;
+      const rest = sessionIndexRef.current.get(agentId) ?? [];
       if (rest.length > 0) {
-        handleSelectSession(agentId, rest[0].id, true); // 面板保持打开，便于连续删除
+        await handleSelectSession(agentId, rest[0].id, true); // 面板保持打开，便于连续删除
         rebuildSessionList(agentIdRef.current); // 列表内容变了，须重建（handleSelectSession 不做这件事）
         return;
       }
@@ -329,7 +378,7 @@ export default function ChatPage() {
           project();
           finish();
         },
-      })
+      }, mySid)
         .catch(() => { finish(); })
         .finally(() => {
           // 流自然断掉（无 done 帧）也收尾落盘，防止半截输出丢失

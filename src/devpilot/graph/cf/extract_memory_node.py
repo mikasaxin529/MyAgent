@@ -1,7 +1,8 @@
-"""ExtractMemory 节点：从对话抽事实存 JSONL（对齐 ChatFlow extract_memory，裁 DB/向量库）。
+"""ExtractMemory 节点：从对话抽事实存长期记忆（对齐 ChatFlow extract_memory）。
 
-LLM 抽取值得长期记住的用户事实/偏好（姓名、约束、偏好），追加到
-.devpilot/memory/facts.jsonl。无 DB——单机单进程，重启可读回。
+LLM 抽取值得长期记住的用户事实/偏好（姓名、约束、偏好）。持久化到
+.devpilot/store.db 的 facts 表（SQLite，见 web/store.py）——重启可读回、
+可被 system prompt 注入回模型。旧 facts.jsonl 兼容：存在则一次性导入后改名。
 """
 from __future__ import annotations
 
@@ -15,6 +16,19 @@ from .base import done, emit, visit
 
 _MEM_DIR = Path(".devpilot/memory")
 _FACTS_FILE = _MEM_DIR / "facts.jsonl"
+
+
+def _persist_facts(facts: list[str]) -> None:
+    """落库：SQLite facts 表；失败（如缺目录权限）退回 JSONL 追加。"""
+    try:
+        from ...web import store
+        store.add_facts(facts)
+        return
+    except Exception:  # noqa: BLE001 - store 不可用时降级 JSONL
+        pass
+    _FACTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with _FACTS_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"facts": facts}, ensure_ascii=False) + "\n")
 
 
 def make_extract_memory_node(gateway, audit=None, emitter=None):
@@ -39,7 +53,7 @@ def make_extract_memory_node(gateway, audit=None, emitter=None):
                 raw += chunk.delta
         facts = _parse_facts(raw)
         if facts:
-            _append_jsonl(_FACTS_FILE, {"facts": facts})
+            _persist_facts(facts)
             emit(emitter, {"type": "memory", "kind": "extract", "count": len(facts)})
         done(emitter, "extract_memory")
         return {"nodes_visited": visited}
@@ -59,7 +73,7 @@ def _parse_facts(raw: str) -> list[str]:
     return []
 
 
-def _append_jsonl(path: Path, obj: dict) -> None:
+def _append_jsonl(path: Path, obj: dict) -> None:  # noqa: RET070 仅供降级路径测试引用
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")

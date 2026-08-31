@@ -33,6 +33,7 @@ tmp_*.py
 # TS 构建缓存
 *.tsbuildinfo
 /outputs/
+/data/
 
 # 部署临时打包产物（sync.sh）
 *.tgz

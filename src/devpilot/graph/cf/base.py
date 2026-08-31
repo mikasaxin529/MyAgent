@@ -109,20 +109,33 @@ def system_prompt_with_date() -> str:
     )
 
 
+# SYSTEM_CHAT 原文（ensure_date_system 判断“首条是否纯占位”用）。
+SYSTEM_CHAT_PLAIN = "你是 DevPilot 的助手，简洁专业地回答用户。"
+
+
 def ensure_date_system(msgs):
     """确保消息列表首条是带今日日期的 system prompt。
 
     兼容 list[dict]（OpenAI 格式）与 list[ChatMessage] 两种形态：首条若为 system
-    则替换为日期版（原 SYSTEM_CHAT 无信息，丢弃无损），否则前插一条。返回新列表。
+    则替换为日期版，否则前插一条。返回新列表。
+
+    首条 system 的附加段（长期记忆 [用户长期记忆] 等）不丢——拼在日期版
+    prompt 之后，保证注入的记忆能随消息到达模型。
     """
     prompt = system_prompt_with_date()
     if not msgs:
         return [ChatMessage("system", prompt)]
     first = msgs[0]
     first_role = first.get("role") if isinstance(first, dict) else getattr(first, "role", None)
+    first_content = (first.get("content") if isinstance(first, dict)
+                     else getattr(first, "content", "")) or ""
     rest = list(msgs[1:])
+    # 原内容里有日期版没有的附加信息（长期记忆等）→ 保留拼接；纯 SYSTEM_CHAT
+    # 占位（无附加信息）→ 直接替换，行为与旧版一致。
+    extra = first_content.replace(SYSTEM_CHAT_PLAIN, "").strip()
+    merged = prompt + (f"\n\n{extra}" if extra else "")
     if first_role == "system":
         if isinstance(first, dict):
-            return [{"role": "system", "content": prompt}] + rest
-        return [ChatMessage("system", prompt)] + rest
+            return [{"role": "system", "content": merged}] + rest
+        return [ChatMessage("system", merged)] + rest
     return [ChatMessage("system", prompt)] + list(msgs)

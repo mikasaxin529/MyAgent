@@ -15,7 +15,10 @@ src/devpilot/
 ├── rag/                 # 知识检索层：代码库混合检索
 ├── agents/              # 多 Agent 编排层：Orchestrator + Worker 角色
 ├── governance/          # 治理层：审批门 + 审计日志
-└── eval/                # 评估层：LLM-judge + 多维度基准
+├── eval/                # 评估层：LLM-judge + 多维度基准
+├── agenthub/            # 多智能体注册中心：目录扫描发现 + manifest 解析
+├── graph/               # langgraph 编排层：cf/ 下 ChatFlow 式 SSE 图
+└── web/                 # HTTP 层：api.py（REST+SSE+WS）+ store.py（SQLite 持久化）
 ```
 
 **分层依赖方向（自底向上，不可逆）**：
@@ -220,6 +223,45 @@ app.py(cmd_run)
             ├─ audit.record(each step)
             └─ return Blackboard
   └─ 打印 Blackboard + 审计条目数
+```
+
+---
+
+## 三·五、持久化与分层记忆（web/store.py）
+
+会话与记忆不再存浏览器 localStorage，统一落服务端 SQLite（`.devpilot/store.db`，
+Docker 里经 `DEVPILOT_DATA_DIR` 指到挂载卷 `./data`）。分层对齐业内 agent 记忆
+范式（MemGPT/Letta、Mem0、Zep 的 short/mid/long-term 划分）：
+
+| 层 | 表 | 生命周期 | 写入时机 | 回读用途 |
+|---|---|---|---|---|
+| 会话持久（元数据） | `sessions` | 用户删除前永久 | 前端流结束 PUT `/api/sessions/{id}` | 会话列表/切换恢复 |
+| 会话上下文（短期记忆） | `messages` | 随会话 | 同上（整段 upsert） | 选中会话时回放完整轨迹 |
+| 中期记忆（会话摘要） | `summaries` | 随会话 | 图尾 compress_memory 节点：≥20 条消息时窗口外 LLM 摘要 | 重建上下文时前置（配合 runtime/Memory 三段式） |
+| 长期记忆（跨会话事实） | `facts` | 全局，append-only | 图尾 extract_memory 节点 LLM 抽取 | 每次 /api/chat 注入 system prompt（最近 15 条） |
+| 交付物文件 | 文件系统 `outputs/` | 永久 | 各 agent render 节点 | `/files/{agent}/{session}/{name}` 下载/预览 |
+
+关键设计：
+
+- **SQLite 而非 Postgres/Mongo**：单机单进程（一个 uvicorn 容器）没有多写者，
+  WAL 模式这个规模读写 <1ms、零运维；等真要多实例再换 driver，表结构可平移。
+- **前端一次性整段 upsert**：与 localStorage 时代持久化节奏一致（流结束才落盘），
+  不做逐消息 diff——单会话消息百级，重写开销可忽略。
+- **旧 localStorage 迁移**：`migrateLocalSessions()` 首次打开时把
+  `dp_sessions` 推到服务端，成功打标 `dp_sessions_migrated`，失败下次再试。
+- **`save_summary` FK 兜底**：摘要可能在会话行落库前先到（图尾节点先跑、
+  前端 PUT 后到），先插占位行保证外键成立。
+- **`ensure_date_system` 保留附加段**：长期记忆附在首条 system 后面，日期版
+  system prompt 替换时不再丢弃（旧版直接覆盖会吞掉注入的记忆）。
+
+REST 契约（前端 `web/frontend/src/api.ts` 同步遵守）：
+
+```
+GET    /api/sessions?agent=xxx   → {sessions:[{id,agent_id,title,created_at,updated_at}]}
+GET    /api/sessions/{sid}        → {session:{id,agent_id,title,updated_at,messages:[...]}}
+PUT    /api/sessions/{sid}        body {agent,title,messages} → {ok}
+DELETE /api/sessions/{sid}        → {ok}
+GET    /api/memory/facts?limit=N  → {facts:[{id,fact,source,created_at}]}
 ```
 
 ---

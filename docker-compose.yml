@@ -14,6 +14,7 @@ services:
       - DEVILOT_PRIMARY_MODEL=${DEVILOT_PRIMARY_MODEL:-deepseek}
     volumes:
       - ./outputs:/app/outputs            # 课件交付物持久化（/files 下载读取此目录）
+      - ./data:/app/.devpilot             # 会话/记忆持久化（SQLite store.db + WAL，容器重建不丢）
       - ./logs:/app/logs
     logging:
       driver: json-file

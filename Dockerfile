@@ -1,8 +1,9 @@
-# syntax=docker/dockerfile:1
 # DevPilot 一体化镜像：FastAPI 后端 + 托管前端 SPA（api.py 自动挂载 web/frontend/dist）
+# 基础镜像用 node:20-alpine-x86 / python:3.13-slim（D3A_TOOLKIT 离线包本地 load，
+# Docker Hub 不可达时不用改任何东西；有网时也可正常 pull 同名镜像）。
 
 # ---------- Stage 1: 前端构建 ----------
-FROM node:24-alpine AS webbuild
+FROM node:20-alpine-x86 AS webbuild
 WORKDIR /web
 # 先装依赖，源码改动不击穿这层缓存
 COPY web/frontend/package.json web/frontend/package-lock.json ./
@@ -11,11 +12,12 @@ COPY web/frontend/ ./
 RUN npm run build
 
 # ---------- Stage 2: 运行时 ----------
-FROM python:3.12-slim AS runtime
+FROM python:3.13-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TZ=Asia/Shanghai \
-    DEVPILOT_DIST_DIR=/app/dist
+    DEVPILOT_DIST_DIR=/app/dist \
+    DEVPILOT_DATA_DIR=/app/.devpilot
 
 WORKDIR /app
 
@@ -31,9 +33,10 @@ COPY --from=webbuild /web/dist ./dist
 # agent→model 绑定等资源配置
 COPY config/ ./config/
 
-# 非 root 运行；outputs 为课件交付物落盘目录（compose 挂载持久化）
+# 非 root 运行；outputs 为课件交付物落盘目录，.devpilot 为会话/记忆 SQLite
+# 落盘目录（两者均由 compose 挂载持久化）
 RUN useradd -m devpilot \
-    && mkdir -p /app/outputs \
+    && mkdir -p /app/outputs /app/.devpilot \
     && chown -R devpilot:devpilot /app
 USER devpilot
 

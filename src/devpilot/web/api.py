@@ -125,6 +125,60 @@ async def agents() -> dict:
 
 
 # ----------------------------------------------------------------------
+# REST：会话持久化（前端从 localStorage 迁到服务端 SQLite）
+# 端点契约（前端 api.ts 同步遵守）：
+#     GET    /api/sessions?agent=xxx      → {sessions:[{id,agent_id,title,updated_at},...]}
+#     GET    /api/sessions/{sid}          → {session:{id,agent_id,title,messages:[...]}}
+#     PUT    /api/sessions/{sid}          body {agent,title,messages} → {ok}
+#     DELETE /api/sessions/{sid}          → {ok}
+#     GET    /api/memory/facts            → {facts:[...]}（长期记忆，调试/可视化用）
+# ----------------------------------------------------------------------
+class SessionPut(BaseModel):
+    agent: str = "general"
+    title: str = "新对话"
+    messages: list[dict] = []
+
+
+@app.get("/api/sessions")
+async def sessions(agent: str | None = None) -> dict:
+    """列出会话摘要（不含消息体）。agent 参数过滤智能体。"""
+    from . import store
+    return {"sessions": store.list_sessions(agent)}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str) -> JSONResponse:
+    """取整条会话（含消息数组）。404 = 不存在。"""
+    from . import store
+    sess = store.get_session(session_id)
+    if sess is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return {"session": sess}
+
+
+@app.put("/api/sessions/{session_id}")
+async def put_session(session_id: str, body: SessionPut) -> dict:
+    """整段 upsert 会话（前端流结束时一次性落全量消息）。"""
+    from . import store
+    store.upsert_session(session_id, body.agent, body.title, body.messages)
+    return {"ok": True}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def del_session(session_id: str) -> dict:
+    """删除会话（消息级联删除，文件产物不删）。"""
+    from . import store
+    return {"ok": store.delete_session(session_id)}
+
+
+@app.get("/api/memory/facts")
+async def memory_facts(limit: int = 30) -> dict:
+    """长期记忆：最近 N 条用户事实（跨会话共享）。"""
+    from . import store
+    return {"facts": store.recent_facts(limit)}
+
+
+# ----------------------------------------------------------------------
 # REST：单轮对话
 # ----------------------------------------------------------------------
 @app.post("/api/chat/legacy")
@@ -260,6 +314,7 @@ async def chat_sse(request: Request) -> StreamingResponse:
     prompt = (body.get("prompt") or "").strip() if isinstance(body, dict) else ""
     history = body.get("history", []) if isinstance(body, dict) else []
     agent_id = body.get("agent", "general") if isinstance(body, dict) else "general"
+    session_id = (body.get("session_id") or "").strip() if isinstance(body, dict) else ""
     if not prompt:
         async def _err():
             yield _sse({"type": "error", "message": "empty prompt"})
@@ -317,10 +372,31 @@ async def chat_sse(request: Request) -> StreamingResponse:
         _emit({"type": "thinking", "node": "system", "phase": "content",
                "delta": "[系统] 已将早期对话压缩为摘要，保留最近 6 条原文。\n"})
     messages_for_graph = compressed + [{"role": "user", "content": prompt}]
+    # 长期记忆注入：把跨会话用户事实附到 system 消息（业内 Letta/Mem0 范式：
+    # 长期记忆按相关性/时间取最近 N 条，拼进 system 上下文）。失败静默——
+    # 记忆层不可用不应阻断聊天主链路。
+    try:
+        from . import store as _store
+        facts = [f["fact"] for f in _store.recent_facts(15)]
+    except Exception:  # noqa: BLE001
+        facts = []
     # 仅 managed_system=True 的智能体（general）由端点注入 SYSTEM_CHAT。
     # 其他智能体（如 yuwen_skill）由图自管 system 消息，避免双 system 冲突。
     if agent.managed_system:
-        messages_for_graph.insert(0, {"role": "system", "content": SYSTEM_CHAT})
+        sys_text = SYSTEM_CHAT
+        if facts:
+            sys_text += "\n\n[用户长期记忆]\n" + "\n".join(f"- {f}" for f in facts)
+            _emit({"type": "thinking", "node": "system", "phase": "content",
+                   "delta": f"[系统] 已注入 {len(facts)} 条长期记忆。\n"})
+        messages_for_graph.insert(0, {"role": "system", "content": sys_text})
+    elif facts and messages_for_graph and isinstance(messages_for_graph[0], dict) \
+            and messages_for_graph[0].get("role") == "system":
+        # 图自管 system 的智能体：直接在原 system 后追加，不额外插一条。
+        messages_for_graph[0] = {
+            **messages_for_graph[0],
+            "content": messages_for_graph[0]["content"]
+            + "\n\n[用户长期记忆]\n" + "\n".join(f"- {f}" for f in facts),
+        }
 
     state_final = {"fa": ""}
 
@@ -337,7 +413,8 @@ async def chat_sse(request: Request) -> StreamingResponse:
     async def _run_graph() -> None:
         try:
             async for chunk in graph.astream(
-                {"task": prompt, "user_message": prompt, "messages": messages_for_graph}
+                {"task": prompt, "user_message": prompt,
+                 "messages": messages_for_graph, "session_id": session_id}
             ):
                 for _node_id, update in chunk.items():
                     if isinstance(update, dict) and update.get("final_answer"):

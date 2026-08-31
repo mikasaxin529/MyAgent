@@ -37,7 +37,10 @@ export interface Message {
   chips?: string[];
 }
 
-// ---- Sessions local storage ----
+// ---- Sessions（服务端持久化：SQLite via /api/sessions）----
+// 迁移说明：会话原存 localStorage（dp_sessions），换设备/清缓存即丢。现走后端
+// SQLite（.devpilot/store.db），多浏览器同源共享。localStorage 版本仍在：
+// 首次打开时一次性迁移到服务端（migrateLocalSessions）。
 
 export interface SessionItem {
   id: string;
@@ -46,12 +49,12 @@ export interface SessionItem {
   updatedAt: number;
 }
 
-export interface AgentSessionGroup {
-  activeIndex: number;
-  sessions: SessionItem[];
+export interface SessionItem {
+  id: string;
+  title: string;
+  messages: Message[];
+  updatedAt: number;
 }
-
-export type SessionStore = Record<string, AgentSessionGroup>;
 
 export interface SessionSummary {
   id: string;
@@ -66,49 +69,98 @@ export interface SessionGroup {
   sessions: SessionSummary[];
 }
 
+/** 服务端会话摘要行（GET /api/sessions 返回）。 */
+export interface StoredSession {
+  id: string;
+  agent_id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+}
+
 const STORAGE_KEY = "dp_sessions";
+const MIGRATED_KEY = "dp_sessions_migrated";
 
-export function loadSessions(): SessionStore {
+/** 老用户一次性迁移：localStorage 会话推到服务端，成功后打标不再重复。 */
+export async function migrateLocalSessions(): Promise<number> {
   try {
+    if (localStorage.getItem(MIGRATED_KEY)) return 0;
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as SessionStore;
+    if (!raw) {
+      localStorage.setItem(MIGRATED_KEY, "1");
+      return 0;
+    }
+    const store = JSON.parse(raw) as Record<string, { sessions: SessionItem[] }>;
+    let count = 0;
+    for (const [agentId, group] of Object.entries(store)) {
+      for (const sess of group.sessions ?? []) {
+        await putSession(sess.id, agentId, sess.title ?? "新对话", sess.messages ?? []);
+        count++;
+      }
+    }
+    localStorage.setItem(MIGRATED_KEY, "1");
+    return count;
   } catch {
-    return {};
+    return 0; // 迁移失败下次再试（不打标）
   }
 }
 
-export function saveSessions(store: SessionStore): void {
+/** 列出服务端全部会话摘要。失败返回空列表（离线降级）。 */
+export async function fetchStoredSessions(): Promise<StoredSession[]> {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    const res = await fetch("/api/sessions");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { sessions: StoredSession[] };
+    return data.sessions ?? [];
   } catch {
-    // storage full — silently ignore
+    return [];
   }
 }
 
-export function getAgentSessions(agentId: string): AgentSessionGroup {
-  const store = loadSessions();
-  return store[agentId] ?? { activeIndex: 0, sessions: [] };
+/** 取整条会话（含消息）。404/网络失败返回 null。 */
+export async function fetchStoredSession(sessionId: string): Promise<SessionItem | null> {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      session: { id: string; title: string; updated_at: number; messages: Message[] };
+    };
+    return {
+      id: data.session.id,
+      title: data.session.title,
+      updatedAt: data.session.updated_at,
+      messages: data.session.messages ?? [],
+    };
+  } catch {
+    return null;
+  }
 }
 
-export function saveAgentSession(agentId: string, group: AgentSessionGroup): void {
-  const store = loadSessions();
-  store[agentId] = group;
-  saveSessions(store);
+/** 整段 upsert 会话（fire-and-forget，失败静默——下次落盘覆盖）。 */
+export async function putSession(
+  sessionId: string,
+  agentId: string,
+  title: string,
+  messages: Message[],
+): Promise<void> {
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agentId, title, messages }),
+    });
+  } catch {
+    // 网络失败静默：流结束后重试成本高，丢一次落盘可接受
+  }
 }
 
-/** 删除某个智能体下的一条会话。删掉的是当前激活会话时，activeIndex 收敛到 0（或空组）。 */
-export function deleteAgentSession(agentId: string, sessionId: string): void {
-  const store = loadSessions();
-  const group = store[agentId];
-  if (!group) return;
-  const wasActive = group.sessions[Math.min(group.activeIndex, group.sessions.length - 1)]?.id === sessionId;
-  group.sessions = group.sessions.filter((s) => s.id !== sessionId);
-  if (wasActive) group.activeIndex = group.sessions.length > 0 ? 0 : -1;
-  else if (group.activeIndex >= group.sessions.length) group.activeIndex = group.sessions.length - 1;
-  if (group.sessions.length === 0) delete store[agentId];
-  else store[agentId] = group;
-  saveSessions(store);
+/** 删除会话。失败静默（列表刷新时会再现，用户可重删）。 */
+export async function deleteStoredSession(sessionId: string): Promise<void> {
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  } catch {
+    // ignore
+  }
 }
 
 // ---- 用户偏好（记忆上次智能体） ----
@@ -344,11 +396,12 @@ export async function chatSSE(
   history: { role: string; content: string }[],
   agent: string,
   opts: SSEChatOptions,
+  sessionId?: string,
 ): Promise<void> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, history, agent }),
+    body: JSON.stringify({ prompt, history, agent, session_id: sessionId ?? "" }),
     signal: opts.signal,
   });
   if (!res.ok) {

@@ -59,3 +59,4 @@ class AgentGraphState(TypedDict, total=False):
     reflector_decision: str  # reflector 判定：done | continue | retry
     reflection: str  # reflector 的反思文本（前端展示）
     tool_messages: list  # 工具返回消息累积（should_continue_after_tool 统计用）
+    session_id: str  # 会话 id（SSE 端点传入，memory 节点落库用）
