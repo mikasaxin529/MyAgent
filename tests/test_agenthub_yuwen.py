@@ -498,6 +498,39 @@ class TestConfirm:
         assert _detect_theme("恢复默认") == "default"
         assert _detect_theme("普通消息") is None
 
+    def test_image_prefs_detection(self):
+        from devpilot.agenthub.yuwen.nodes.confirm import _detect_image_prefs
+        assert _detect_image_prefs("配图用水彩风格") == {"image_style": "水彩"}
+        assert _detect_image_prefs("插图多一些") == {"image_count": "all"}
+        assert _detect_image_prefs("不要配图") == {"image_count": "none"}
+        assert _detect_image_prefs("生图换成国风，插图全部要") == {
+            "image_style": "国风", "image_count": "all"}
+        # 无触发词不误伤（课文内容里出现风格词）
+        assert _detect_image_prefs("这课讲的是水彩画") == {}
+        assert _detect_image_prefs("普通消息") == {}
+
+    def test_image_style_switch_persists(self, outputs_tmp):
+        """确认轮改配图风格 → params 更新并落盘（gen_images 据此生效）。"""
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False, yuwen_params=PARAMS)
+        result, frames = self._run("配图用剪纸风格")
+        assert result["yuwen_outline_confirmed"] is False
+        assert result["yuwen_params"]["image_style"] == "剪纸"
+        assert _load_state(PARAMS)["yuwen_params"]["image_style"] == "剪纸"
+        assert any(f.get("type") == "content" and "配图" in f.get("delta", "")
+                   for f in frames)
+
+    def test_image_prefs_plus_confirm(self, outputs_tmp):
+        """配图切换与确认同句 → 更新 params 并放行。"""
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False, yuwen_params=PARAMS)
+        result, _ = self._run("不要配图，确认")
+        assert result["yuwen_outline_confirmed"] is True
+        assert result["yuwen_params"]["image_count"] == "none"
+        assert _load_state(PARAMS)["yuwen_params"]["image_count"] == "none"
+
 
 # ======================================================================
 # 7. gen_slides 节点
@@ -845,7 +878,7 @@ class TestGenImages:
                                        "yuwen_content": doc}))
         assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
         done = [f for f in frames if f.get("status") == "done"]
-        assert any("IMAGE_API_KEY" in f.get("detail", "") for f in done)
+        assert any("DASHSCOPE_API_KEY" in f.get("detail", "") for f in done)
 
     def test_no_empty_image_noop(self, outputs_tmp):
         """无待配图元素（src 已填或无 image）→ 直接过，不调网关。"""
@@ -902,13 +935,135 @@ class TestGenImages:
                                        "yuwen_content": doc}))
         assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
 
+    def test_style_injected_into_prompt(self, outputs_tmp):
+        """image_style=水彩 → prompt 含水彩风格短语。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        params = {**PARAMS, "image_style": "水彩"}
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            asyncio.run(node({"yuwen_params": params, "yuwen_content": doc}))
+        prompts = [c[0][0] for c in fake_gen.generate.call_args_list]
+        assert prompts and all("水彩插画风格" in p for p in prompts)
+        assert all("无文字，无水印" in p for p in prompts)
+
+    def test_invalid_style_falls_back_default(self, outputs_tmp):
+        """非法 image_style → 回退默认"绘本"短语。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        params = {**PARAMS, "image_style": "赛博朋克"}
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            asyncio.run(node({"yuwen_params": params, "yuwen_content": doc}))
+        prompts = [c[0][0] for c in fake_gen.generate.call_args_list]
+        assert prompts and all("儿童绘本风格" in p for p in prompts)
+
+    def test_minimal_truncation_priority(self, outputs_tmp):
+        """minimal（默认）：上限 max(2, periods)，封面 > 每课时首页优先。
+
+        4 个候选、periods=1 → 上限 2：s01 封面（rank0）+ s03 第二课时
+        首页（rank1）入选；s02（rank2 有 caption）与 s04（rank3）走占位。
+        """
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        img = lambda cap="": {"type": "image", "caption": cap, "src": ""}
+        doc = {"version": "1.0",
+               "meta": {**SAMPLE_OUTLINE["meta"], "periods": 1},
+               "slides": [
+                   {"id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+                    "elements": [img("封面图")]},
+                   {"id": "s02", "kind": "intro", "title": "诗人", "period": 1,
+                    "elements": [img("李白像")]},
+                   {"id": "s03", "kind": "read", "title": "朗读", "period": 2,
+                    "elements": [img("朗读场景")]},
+                   {"id": "s04", "kind": "extend", "title": "拓展", "period": 2,
+                    "elements": [img("拓展图")]},
+               ],
+               "lessonPlan": {}, "handout": {"levels": []}}
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            result = asyncio.run(node({"yuwen_params": PARAMS,
+                                       "yuwen_content": doc}))
+        srcs = {s["id"]: s["elements"][0]["src"]
+                for s in result["yuwen_content"]["slides"]}
+        assert srcs["s01"] == "assets/s01_0.png"   # 封面优先
+        assert srcs["s03"] == "assets/s03_0.png"   # 第二课时首页优先
+        assert srcs["s02"] == "" and srcs["s04"] == ""  # 截断走占位
+        assert fake_gen.generate.await_count == 2
+
+    def test_all_generates_everything(self, outputs_tmp):
+        """image_count=all → 不受上限截断，全部生成。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        img = lambda: {"type": "image", "caption": "x", "src": ""}
+        doc = {"version": "1.0", "meta": SAMPLE_OUTLINE["meta"],
+               "slides": [{"id": f"s0{i}", "kind": "intro", "title": f"页{i}",
+                           "period": 1, "elements": [img()]} for i in range(1, 5)],
+               "lessonPlan": {}, "handout": {"levels": []}}
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            result = asyncio.run(node({"yuwen_params": {**PARAMS,
+                                                        "image_count": "all"},
+                                       "yuwen_content": doc}))
+        assert all(s["elements"][0]["src"]
+                   for s in result["yuwen_content"]["slides"])
+        assert fake_gen.generate.await_count == 4
+
+    def test_none_skips_generation(self, outputs_tmp):
+        """image_count=none → 直接跳过，不调网关。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        frames = []
+        node = _make_gen_images_node(lambda f: frames.append(f))
+        result = asyncio.run(node({"yuwen_params": {**PARAMS,
+                                                    "image_count": "none"},
+                                   "yuwen_content": doc}))
+        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
+        fake_gen.generate.assert_not_awaited()
+        done = [f for f in frames if f.get("status") == "done"]
+        assert any("不配图" in f.get("detail", "") for f in done)
+
     def test_imagegen_unavailable_without_env(self, monkeypatch):
         from devpilot.agenthub.yuwen import imagegen as ig
-        monkeypatch.delenv("IMAGE_API_KEY", raising=False)
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
         assert ig.ImageGen().available is False
-        monkeypatch.setenv("IMAGE_API_KEY", "k")
+        monkeypatch.delenv("DASHSCOPE_IMAGE_MODEL", raising=False)
+        monkeypatch.delenv("DASHSCOPE_IMAGE_BASE", raising=False)
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
         g = ig.ImageGen()
-        assert g.available is True and g._model == "doubao-seedream"
+        assert g.available is True and g._model == "qwen-image-3.0-pro"
+        assert "dashscope" in g._base
+        monkeypatch.setenv("DASHSCOPE_IMAGE_MODEL", "wan2.7-image")
+        assert ig.ImageGen()._model == "wan2.7-image"
+
+    def test_imagegen_native_url_normalize(self, monkeypatch):
+        """base 兼容层路径（compatible-mode/v1）自动归一成原生协议 URL。"""
+        from devpilot.agenthub.yuwen import imagegen as ig
+        assert ig._native_url(
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+        ) == ("https://token-plan.cn-beijing.maas.aliyuncs.com"
+              "/api/v1/services/aigc/multimodal-generation/generation")
+        # 域名根形态原样拼原生路径
+        assert ig._native_url(
+            "https://dashscope.aliyuncs.com/"
+        ).endswith("/api/v1/services/aigc/multimodal-generation/generation")
 
 
 # ======================================================================
@@ -981,6 +1136,34 @@ class TestExtractParams:
             "task": "静夜思 一年级", "user_message": "静夜思 一年级", "messages": []}))
         _, kwargs = mock_gw.chat.call_args
         assert kwargs.get("json_mode") is True
+
+    def test_extract_params_image_prefs(self):
+        """首轮抽到配图偏好 → 进 yuwen_params；没提就不写键。"""
+        from devpilot.agenthub.yuwen.nodes.extract_params import _make_extract_params_node
+
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(json.dumps({
+            "title": "静夜思", "grade": 1, "lesson_type": "古诗词",
+            "textbook": "部编版", "image_style": "水彩", "image_count": "none",
+            "params_ready": True, "question": "", "chips": [],
+        }, ensure_ascii=False))
+        node = _make_extract_params_node(mock_gw, None)
+        result = asyncio.run(node({
+            "task": "做《静夜思》，配图用水彩，不要插图",
+            "user_message": "做《静夜思》，配图用水彩，不要插图", "messages": []}))
+        assert result["yuwen_params"]["image_style"] == "水彩"
+        assert result["yuwen_params"]["image_count"] == "none"
+
+        # LLM 乱抽非法风格 → 丢弃，不写键
+        mock_gw.chat.return_value = _chat_response(json.dumps({
+            "title": "静夜思", "grade": 1, "lesson_type": "古诗词",
+            "textbook": "部编版", "image_style": "抽象派", "image_count": "lots",
+            "params_ready": True, "question": "", "chips": [],
+        }, ensure_ascii=False))
+        result = asyncio.run(node({
+            "task": "做《静夜思》", "user_message": "做《静夜思》", "messages": []}))
+        assert "image_style" not in result["yuwen_params"]
+        assert "image_count" not in result["yuwen_params"]
 
 
 # ======================================================================

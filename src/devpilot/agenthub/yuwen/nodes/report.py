@@ -6,6 +6,31 @@ from typing import Callable
 from ..state import YuwenState, _emit, _session_name, _step
 
 
+def _visual_note(state: YuwenState) -> str:
+    """视觉审查摘要片段（追加进 final_answer）：分数 + 问题按严重度计数。
+
+    未跑（available=false）注明原因——用户至少知道审查为什么缺席；
+    state 里完全没有 visual 字段（旧会话 / 渲染前就 END）返回空串。
+    """
+    visual = state.get("yuwen_visual") or {}
+    if not visual:
+        return ""
+    if not visual.get("available"):
+        return f"视觉审查未启用（{visual.get('reason', '未知原因')}）"
+    sev_count: dict[str, int] = {}
+    for issue in visual.get("issues") or []:
+        sev = str(issue.get("severity") or "low")
+        sev_count[sev] = sev_count.get(sev, 0) + 1
+    n_issues = sum(sev_count.values())
+    note = f"视觉审查 {visual.get('score', 0)} 分，{n_issues} 个问题"
+    if n_issues:
+        order = {"high": "高", "medium": "中", "low": "低"}
+        parts = [f"{order[s]} {sev_count[s]}"
+                 for s in ("high", "medium", "low") if sev_count.get(s)]
+        note += f"（{' / '.join(parts)}）"
+    return note
+
+
 def _make_report_node(emitter: Callable[[dict], None] | None):
     """report 节点工厂：汇总交付结果，推 files/done 帧。"""
 
@@ -26,7 +51,8 @@ def _make_report_node(emitter: Callable[[dict], None] | None):
         if error and files:
             _emit(emitter, {"type": "files", "files": files})
             file_names = " / ".join(f["name"] for f in files)
-            answer = f"课件部分生成成功（{len(files)} 个文件：{file_names}），但 {error}"
+            answer = (f"课件部分生成成功（{len(files)} 个文件：{file_names}），"
+                      f"但 {error}{_visual_note(state)}")
             detail = f"部分成功：{error}"
             _step(emitter, "report", "交付报告", "done", detail)
             _emit(emitter, {
@@ -70,13 +96,18 @@ def _make_report_node(emitter: Callable[[dict], None] | None):
                      if isinstance(v, (int, float))]
             if parts:
                 review_note = f"（审查评分：{'/'.join(parts)}）"
+        visual_note = _visual_note(state)
+        v_ok = "，" + visual_note if visual_note else ""   # 逗号分隔续句
+        v_full = ("。" + visual_note) if visual_note else ""  # 句号后另起
         n_files = len(files)
         if n_files > 0:
             file_names = " / ".join(f["name"] for f in files)
-            answer = f"课件已生成，共 {n_files} 个文件：{file_names}{review_note}"
+            answer = (f"课件已生成，共 {n_files} 个文件：{file_names}"
+                      f"{review_note}{v_ok}")
             detail = f"已写入 outputs/yuwen/{session}/"
         else:
-            answer = f"课件内容已生成，但渲染未产出文件。{review_note}"
+            answer = (f"课件内容已生成，但渲染未产出文件。"
+                      f"{review_note}{v_full}")
             detail = "无产出文件"
 
         _step(emitter, "report", "交付报告", "done", detail)

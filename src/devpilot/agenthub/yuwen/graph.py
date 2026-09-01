@@ -9,6 +9,8 @@
   → review（AI 审查评分）⇄ revise（按问题清单修订，≤2 轮）
   → gen_images（AI 配图回填，无 key 跳过）
   → render（subprocess 三件套）
+  → visual_review（PPTX 转逐页图 → 百炼 qwen-vl 视觉审查，无 key/无
+    LibreOffice 降级跳过，不阻断）
   → report（交付汇总）
 
 跨轮状态机原理（本图的心脏）：
@@ -34,6 +36,12 @@
    "chips": ["确认大纲，开始生成", "第1页改成…", "换青蓝主题", "换墨绿主题"]}
   {"type": "review", "review": {"scores": {structure,pedagogy,content,stage_fit},
                                 "issues": [{page_id, problems:[str]}], "pass": bool}}
+  {"type": "visual", "visual": {available: bool,   // false=未跑（无key/无soffice/失败）
+                                reason: str,       // available=false 时的原因
+                                score: int,        // 各抽查页平均分 0-100
+                                pages: [{page_id, score, image: "/files/yuwen/<session>/review/sNN.png"}],
+                                issues: [{page_id, type, severity: low|medium|high,
+                                          bbox: [x1,y1,x2,y2](0-1000归一化), suggestion}]}}
   meta.theme ∈ default / fresh-blue / warm-green（渲染器由 renderer agent 消费）。
   gen_images 回写的 image.src 是**相对 session 目录**路径（如 "assets/s03_2.png"），
   渲染器需解析为绝对路径。
@@ -63,6 +71,7 @@ from .nodes import (
     _make_report_node,
     _make_review_node,
     _make_revise_node,
+    _make_visual_review_node,
 )
 from .state import (
     YuwenState,
@@ -187,6 +196,7 @@ def build_graph(
     graph.add_node("revise", _make_revise_node(gateway, emitter, kw_slide))
     graph.add_node("gen_images", _make_gen_images_node(emitter))
     graph.add_node("render", _make_render_node(emitter))
+    graph.add_node("visual_review", _make_visual_review_node(emitter))
     graph.add_node("report", _make_report_node(emitter))
 
     # 入口
@@ -214,7 +224,7 @@ def build_graph(
         {"gen_slides": "gen_slides", "__end__": END},
     )
 
-    # 主链：逐页生成 → 教案 → 审查 ⇄ 修订 → 配图 → 渲染 → 报告
+    # 主链：逐页生成 → 教案 → 审查 ⇄ 修订 → 配图 → 渲染 → 视觉审查 → 报告
     graph.add_edge("gen_slides", "gen_plan")
     graph.add_edge("gen_plan", "review")
     graph.add_conditional_edges(
@@ -224,7 +234,8 @@ def build_graph(
     )
     graph.add_edge("revise", "review")  # 修订后再评一轮
     graph.add_edge("gen_images", "render")
-    graph.add_edge("render", "report")
+    graph.add_edge("render", "visual_review")
+    graph.add_edge("visual_review", "report")
     graph.add_edge("report", END)
 
     return graph.compile()

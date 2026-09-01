@@ -69,6 +69,31 @@ export interface ReviewData {
   pass?: boolean;
 }
 
+/** visual 帧单页视觉问题（字段全可选防御） */
+export interface VisualIssue {
+  page_id?: string;
+  type?: string;
+  severity?: string;
+  bbox?: number[];
+  suggestion?: string;
+}
+
+/** visual 帧单页渲染快照（image 第一版不展示，保留字段） */
+export interface VisualPage {
+  page_id?: string;
+  score?: number;
+  image?: string;
+}
+
+/** visual 帧 payload：渲染后视觉审查结果 */
+export interface VisualReviewData {
+  available?: boolean;
+  reason?: string;
+  score?: number;
+  pages?: VisualPage[];
+  issues?: VisualIssue[];
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -85,6 +110,8 @@ export interface Message {
   outline?: OutlineData;
   /** AI 审查结果（review 帧，仅 yuwen 管线产出） */
   review?: ReviewData;
+  /** 渲染后视觉审查结果（visual 帧，仅 yuwen 管线产出） */
+  visual?: VisualReviewData;
 }
 
 // ---- Sessions（服务端持久化：SQLite via /api/sessions）----
@@ -432,6 +459,8 @@ export interface SSEChatOptions {
   onOutline?: (outline: OutlineData, chips?: string[]) => void;
   /** review 帧：AI 审查结果 */
   onReview?: (review: ReviewData) => void;
+  /** visual 帧：渲染后视觉审查结果 */
+  onVisual?: (visual: VisualReviewData) => void;
   onAgentMeta?: (meta: {
     agent_id: string;
     display_name: string;
@@ -509,6 +538,9 @@ export async function chatSSE(
               break;
             case "review":
               opts.onReview?.((frame.review ?? {}) as ReviewData);
+              break;
+            case "visual":
+              opts.onVisual?.((frame.visual ?? {}) as VisualReviewData);
               break;
             case "agent_meta":
               opts.onAgentMeta?.(frame as {

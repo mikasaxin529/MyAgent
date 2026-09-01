@@ -23,6 +23,23 @@ def _normalize_grade(raw: Any) -> int:
         return 0
 
 
+def _image_prefs(parsed: dict) -> dict:
+    """从 LLM 抽取结果提取可选配图偏好（image_style/image_count）。
+
+    用户没提或值非法就不写该键——gen_images 侧缺省走"绘本 + minimal"。
+    """
+    from .gen_images import IMAGE_COUNTS, IMAGE_STYLES
+
+    prefs: dict = {}
+    style = str(parsed.get("image_style") or "").strip()
+    if style in IMAGE_STYLES:
+        prefs["image_style"] = style
+    count = str(parsed.get("image_count") or "").strip()
+    if count in IMAGE_COUNTS:
+        prefs["image_count"] = count
+    return prefs
+
+
 def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | None):
     """extract_params 节点工厂：对话追问收集参数。"""
 
@@ -81,6 +98,7 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
         chips = parsed.get("chips") or []
 
         params_ready = bool(title and 1 <= grade <= 6 and lesson_type)
+        prefs = _image_prefs(parsed)  # 用户提到了才有键，缺省走 gen_images 默认
 
         if not params_ready:
             # 参数缺失，返回追问。
@@ -96,13 +114,15 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
                 content_frame["chips"] = [str(c) for c in chips]
             _emit(emitter, content_frame)
             _step(emitter, "extract_params", "解析参数", "done", "追问参数")
+            ask_params = {
+                "title": title,
+                "grade": grade if isinstance(grade, int) else 0,
+                "lesson_type": lesson_type or "",
+                "textbook": textbook or "",
+            }
+            ask_params.update(prefs)
             return {
-                "yuwen_params": {
-                    "title": title,
-                    "grade": grade if isinstance(grade, int) else 0,
-                    "lesson_type": lesson_type or "",
-                    "textbook": textbook or "",
-                },
+                "yuwen_params": ask_params,
                 "yuwen_params_ready": False,
                 "final_answer": question,
                 "nodes_visited": visited,
@@ -115,7 +135,12 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
             "lesson_type": lesson_type,
             "textbook": textbook or f"部编版{grade}年级",
         }
+        params.update(prefs)
         detail = f"《{title}》· {grade}年级 · {lesson_type}"
+        if prefs.get("image_style"):
+            detail += f" · 配图{prefs['image_style']}"
+        if prefs.get("image_count"):
+            detail += f" · {prefs['image_count']}"
         _step(emitter, "extract_params", "解析参数", "done", detail)
         return {
             "yuwen_params": params,

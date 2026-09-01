@@ -817,3 +817,54 @@ body {
 @media (max-width: 640px) {
   .rc-scores { grid-template-columns: 1fr; }
 }
+
+/* ---- 视觉审查卡（visual 帧）：与 review-card 同风格，总分 + 按页问题清单 ---- */
+.visual-card {
+  margin: 14px 0; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg); padding: 10px 14px 12px; font-size: 13px;
+}
+.visual-card.unavailable {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--sunken); color: var(--text3); font-size: 12.5px;
+  padding: 9px 14px;
+}
+.vc-off-icon { display: inline-flex; color: var(--text3); }
+.vc-reason { color: var(--text3); }
+.vc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.vc-icon { display: inline-flex; color: var(--text3); }
+.vc-title { font-size: 12px; color: var(--text3); flex: 1; }
+.vc-score {
+  font: 700 22px/1 ui-monospace, monospace;
+  color: var(--text2);
+}
+.vc-score i { font: 600 11px/1 inherit; font-style: normal; color: var(--text3); margin-left: 2px; }
+.vc-score.good { color: var(--ok); }
+.vc-score.mid { color: var(--run); }
+.vc-score.bad { color: var(--err); }
+.vc-score.na { color: var(--text3); }
+.vc-issues {
+  list-style: none; margin: 0; padding: 8px 0 0;
+  border-top: 1px dashed var(--line-strong);
+  display: grid; gap: 6px;
+}
+.vc-group { display: flex; align-items: flex-start; gap: 8px; }
+.vc-group-items { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.vc-page {
+  flex: none; font: 600 11px ui-monospace, monospace;
+  color: var(--text3); background: var(--sunken);
+  border-radius: 5px; padding: 1px 6px; margin-top: 1px;
+}
+.vc-issue { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.vc-sev {
+  flex: none; border-radius: 999px; padding: 0 7px;
+  font-size: 10.5px; font-weight: 700; line-height: 17px;
+}
+.vc-sev.high { background: var(--seal-soft); color: var(--err); }
+.vc-sev.medium { background: var(--run-soft); color: var(--run); }
+.vc-sev.low { background: var(--sunken); color: var(--text3); }
+.vc-type { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.vc-sug { font-size: 12px; color: var(--text2); }
+.vc-clean {
+  padding: 8px 0 0; border-top: 1px dashed var(--line-strong);
+  margin-top: 8px; font-size: 12.5px; color: var(--ok);
+}

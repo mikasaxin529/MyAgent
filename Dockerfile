@@ -22,6 +22,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# LibreOffice（soffice）：visual_review 节点把 PPTX 无头转 PDF 再逐页出图。
+# 只装 impress 组件 + 中文字体（课件审查的渲染保真），装完清 apt 缓存。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libreoffice-impress fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 # 包元数据 + 源码一起进第一层（setuptools 需要 src/ 才能 editable-less 安装）
 COPY pyproject.toml README.md ./
 COPY src/ ./src/

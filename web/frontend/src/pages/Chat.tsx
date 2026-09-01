@@ -375,6 +375,10 @@ export default function ChatPage() {
           patchAssistant((m) => ({ ...m, review }));
           project();
         },
+        onVisual: (visual) => {
+          patchAssistant((m) => ({ ...m, visual }));
+          project();
+        },
         onAgentMeta: (meta) => {
           if (!inView()) return;
           setCurrentAgent((prev) => {

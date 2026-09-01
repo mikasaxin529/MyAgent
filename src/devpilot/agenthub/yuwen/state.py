@@ -43,6 +43,7 @@ class YuwenState(TypedDict, total=False):
     yuwen_render_error: str      # 渲染错误标记
     yuwen_error: str             # 内容生成错误标记（gen_content 失败时写入，render/report 透传优先展示）
     yuwen_files: list            # [{name, path, size, mime}, ...]
+    yuwen_visual: dict           # 视觉审查结果 {available, reason, score, pages, issues}（帧契约见 graph.py）
 
 
 # ---------------------------------------------------------------------------
@@ -185,14 +186,17 @@ _CONFIRM_WORDS = ("确认", "可以", "没问题", "开始生成", "直接生成
                   "同意", "ok", "OK", "好", "行", "继续")
 _THEME_WORDS = ("blue", "fresh", "green", "warm", "主题", "蓝色", "青蓝",
                 "绿色", "墨绿", "橙色", "默认")
+# 配图偏好切换触发词（与 confirm._IMAGE_TRIGGERS 保持一致）：
+# "配图用水彩""插图多一些""不要配图"也是对大纲轮的应答，需兜底路由进 confirm
+_IMAGE_WORDS = ("配图", "插图", "生图")
 
 
 def _looks_like_outline_command(msg: str) -> bool:
-    """消息是否像对大纲的应答（确认/切主题指令）——确定性关键词判定。"""
+    """消息是否像对大纲的应答（确认/切主题/改配图指令）——确定性关键词判定。"""
     s = (msg or "").strip()
     if not s or len(s) > 40:
         return False
-    if any(w in s for w in _THEME_WORDS):
+    if any(w in s for w in _THEME_WORDS) or any(w in s for w in _IMAGE_WORDS):
         return True
     # 确认词要求整句短且不含新课文信息信号（书名号）——"确认大纲，开始生成"
     # 命中；"确认《静夜思》课件参数"这种含书名号的走正常 extract_params。
