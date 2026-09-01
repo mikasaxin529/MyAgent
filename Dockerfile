@@ -17,6 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TZ=Asia/Shanghai \
     DEVPILOT_DIST_DIR=/app/dist \
+    DEVPILOT_OUTPUTS_DIR=/app/outputs \
     DEVPILOT_DATA_DIR=/app/.devpilot
 
 WORKDIR /app

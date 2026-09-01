@@ -76,7 +76,10 @@ app.add_middleware(
 
 
 # 交付物落盘根目录（契约 3.4）：src/devpilot/web/api.py -> parents[3] = 项目根
-OUTPUTS_DIR = Path(__file__).resolve().parents[3] / "outputs"
+# 优先 DEVPILOT_OUTPUTS_DIR（Docker 非 editable 安装时 parents[3] 指向
+# site-packages 只读目录，与 DEVPILOT_DIST_DIR 同一套容器约定）。
+OUTPUTS_DIR = Path(os.environ.get("DEVPILOT_OUTPUTS_DIR")
+                   or Path(__file__).resolve().parents[3] / "outputs")
 
 
 def _eval_path(rel: str) -> str:
