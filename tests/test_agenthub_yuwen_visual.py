@@ -10,6 +10,8 @@
 6. 抽查页全部失败 → available=false
 7. VLMReview env 开关与默认模型
 8. _visual_note（report 摘要片段）三态
+9. visual_fix 修复闭环：路由放行 / 修复回写 / 降分回滚 / 复查透传 /
+   成本护栏（severity、页数上限）/ 图接线
 
 运行：
     pytest tests/test_agenthub_yuwen_visual.py -x -v
@@ -475,3 +477,286 @@ class TestReportWithVisual:
         result, _ = self._report(state)
         assert "视觉审查未启用（未安装 LibreOffice，无法转页面图）" \
             in result["final_answer"]
+
+
+# ======================================================================
+# visual_fix 修复闭环
+# ======================================================================
+
+def _visual(score: int, issues: list, n_pages: int = 3) -> dict:
+    """构造 visual_review 输出帧（available=True）。"""
+    return {"available": True, "reason": "", "score": score,
+            "pages": [{"page_id": f"s0{i+1}", "score": score}
+                      for i in range(n_pages)],
+            "issues": issues}
+
+
+def _issue(page_id: str, typ: str = "text_too_small",
+           sev: str = "medium") -> dict:
+    return {"page_id": page_id, "type": typ, "severity": sev,
+            "bbox": [], "suggestion": "增大正文字号到 24pt"}
+
+
+def _fixed_page(i: int) -> dict:
+    """visual_fix LLM 重生成返回的合法单页（title 带"修复"便于断言）。"""
+    return {"id": f"s0{i}", "kind": "cover", "title": f"修复{i}", "period": 1,
+            "elements": [{"type": "heading", "content": f"新内容{i}",
+                          "size": "h1"}]}
+
+
+def _resp(page: dict):
+    """gateway.chat 返回值替身（_call_llm 只消费 .content）。"""
+    return MagicMock(content=json.dumps(page, ensure_ascii=False))
+
+
+def _run_fix(state: dict, gateway: MagicMock) -> tuple[dict, list]:
+    from devpilot.agenthub.yuwen.nodes.visual_fix import _make_visual_fix_node
+    frames: list = []
+    node = _make_visual_fix_node(gateway, lambda f: frames.append(f))
+    result = asyncio.run(node(state))
+    return result, frames
+
+
+def _tmp_doc(tmp_path) -> dict:
+    """读回 tmp_content.json（visual_fix 回写的盘上 doc）。"""
+    from devpilot.agenthub.yuwen import state as st
+    p = st._content_path(PARAMS)
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+class TestRouteAfterVisual:
+    """闭环总闸路由：放行条件与进入修复条件。"""
+
+    def _route(self, state):
+        from devpilot.agenthub.yuwen.graph import _route_after_visual
+        return _route_after_visual(state)
+
+    def test_unavailable_to_report(self):
+        assert self._route({"yuwen_visual": {"available": False, "reason": "无key",
+                                             "score": 0, "pages": [],
+                                             "issues": []}}) == "report"
+
+    def test_no_issues_to_report(self):
+        assert self._route({"yuwen_visual": _visual(95, [])}) == "report"
+
+    def test_low_only_to_report(self):
+        # low 只统计不修（成本护栏）
+        assert self._route({"yuwen_visual": _visual(80, [_issue("s01", sev="low")])}) \
+            == "report"
+
+    def test_render_layer_only_to_report(self):
+        # color/theme 属渲染层，重生成内容无意义
+        v = _visual(80, [_issue("s01", "color_mismatch", "high"),
+                         _issue("s02", "theme_mismatch", "high")])
+        assert self._route({"yuwen_visual": v}) == "report"
+
+    def test_medium_small_deck_to_fix(self):
+        # 抽查 ≤4 页时 medium 触发
+        assert self._route({"yuwen_visual": _visual(80, [_issue("s01")],
+                                                   n_pages=3)}) == "visual_fix"
+
+    def test_high_always_to_fix(self):
+        # 高严重度不受页数门槛限制
+        v = _visual(60, [_issue("s01", sev="high")], n_pages=8)
+        assert self._route({"yuwen_visual": v}) == "visual_fix"
+
+    def test_rounds_exhausted_to_report(self):
+        v = _visual(80, [_issue("s01", sev="high")])
+        assert self._route({"yuwen_visual": v,
+                            "yuwen_visual_fix_rounds": 1}) == "report"
+
+    def test_pending_to_compare(self):
+        # 修复做完、复查回来 → 再进 visual_fix 走对比阶段
+        assert self._route({"yuwen_visual": _visual(80, []),
+                            "yuwen_visual_fix_rounds": 1,
+                            "yuwen_visual_fix_pending": True}) == "visual_fix"
+
+    def test_route_after_fix(self):
+        from devpilot.agenthub.yuwen.graph import _route_after_fix
+        assert _route_after_fix({"yuwen_visual_fix_pending": True}) == "render"
+        assert _route_after_fix({"yuwen_visual_fix_rollback": True}) == "render"
+        assert _route_after_fix({}) == "report"
+
+
+class TestVisualFixRepair:
+    """修复阶段：挑页重生成、回写 doc + 盘、备份与计数。"""
+
+    def test_medium_issue_regenerates_page(self, outputs_tmp):
+        gw = MagicMock()
+        gw.chat.return_value = _resp(_fixed_page(1))
+        state = {"yuwen_params": PARAMS, "yuwen_content": _doc(3),
+                 "yuwen_visual": _visual(70, [_issue("s01")])}
+        result, frames = _run_fix(state, gw)
+
+        # 页内容已换成重生成版（title 被锁定逻辑保留原标题）
+        s01 = result["yuwen_content"]["slides"][0]
+        assert s01["title"] == "标题1"          # 身份三键锁定
+        assert s01["elements"][0]["content"] == "新内容1"  # 内容已更新
+        # 盘上 tmp_content.json 同步回写（render 读盘）
+        assert _tmp_doc(outputs_tmp)["slides"][0]["elements"][0]["content"] \
+            == "新内容1"
+        # 闭环状态：轮数置位、待复查标记、备份与基线分
+        assert result["yuwen_visual_fix_rounds"] == 1
+        assert result["yuwen_visual_fix_pending"] is True
+        assert result["yuwen_visual_fix_prev_score"] == 70
+        assert result["yuwen_visual_fix_backup"]["slides"][0]["title"] == "标题1"
+        assert result["yuwen_visual_fix_backup"]["slides"][0]["elements"][0]["content"] \
+            == "页1"  # 备份是修复前原页
+        # step 帧 running/done 成对
+        steps = [f for f in frames if f.get("type") == "step"
+                 and f["id"] == "visual_fix"]
+        assert {s["status"] for s in steps} == {"running", "done"}
+        # 提示词带问题中文释义与 suggestion 原文
+        sys_prompt = gw.chat.call_args[0][0][0].content
+        assert "字体过小" in sys_prompt and "增大正文字号到 24pt" in sys_prompt
+
+    def test_llm_failure_keeps_original(self, outputs_tmp):
+        """LLM 炸 / 输出过不了校验 → 保留原版直接放行（不置 pending）。"""
+        gw = MagicMock()
+        gw.chat.return_value = MagicMock(content="彻底不是 JSON")
+        state = {"yuwen_params": PARAMS, "yuwen_content": _doc(3),
+                 "yuwen_visual": _visual(70, [_issue("s01", sev="high")])}
+        result, frames = _run_fix(state, gw)
+        assert "yuwen_content" not in result          # doc 未动
+        assert result["yuwen_visual_fix_pending"] is False
+        assert result["yuwen_visual_fix_rounds"] == 1  # 轮数仍消耗，不再重试
+        assert "保留原版" in result["yuwen_visual_fix_note"]
+        assert len(_visual_frames(frames)) == 0
+
+    def test_ghost_page_skipped(self, outputs_tmp):
+        gw = MagicMock()
+        gw.chat.return_value = _resp(_fixed_page(1))
+        state = {"yuwen_params": PARAMS, "yuwen_content": _doc(3),
+                 "yuwen_visual": _visual(70, [_issue("s99", sev="high")])}
+        result, _ = _run_fix(state, gw)
+        assert result["yuwen_visual_fix_pending"] is False
+        gw.chat.assert_not_called()
+
+    def test_max_three_pages_by_severity(self, outputs_tmp):
+        """页数上限 3：6 页 high issue 只重生成排序前 3 页（确定性取前 3）。"""
+        gw = MagicMock()
+        gw.chat.return_value = _resp(_fixed_page(1))
+        issues = [_issue(f"s0{i}", sev="high") for i in range(1, 7)]
+        state = {"yuwen_params": PARAMS, "yuwen_content": _doc(6),
+                 "yuwen_visual": _visual(50, issues, n_pages=6)}
+        result, _ = _run_fix(state, gw)
+        assert gw.chat.call_count == 3
+        assert result["yuwen_visual_fix_pending"] is True
+        # page_id 升序确定性取前 3：s01-s03 换成修复内容，s04+ 保持原样
+        slides = result["yuwen_content"]["slides"]
+        updated = [s["id"] for s in slides
+                   if s["elements"][0]["content"] == "新内容1"]
+        assert updated == ["s01", "s02", "s03"]
+
+
+class TestVisualFixCompare:
+    """对比阶段：升/平保留，降分或复查降级回滚。"""
+
+    def _base(self, prev_score, new_visual):
+        return {"yuwen_params": PARAMS, "yuwen_content": _doc(3),
+                "yuwen_visual": new_visual,
+                "yuwen_visual_fix_rounds": 1,
+                "yuwen_visual_fix_pending": True,
+                "yuwen_visual_fix_prev_score": prev_score,
+                "yuwen_visual_fix_backup": _doc(3),
+                "yuwen_visual_fix_prev_visual": _visual(prev_score, [])}
+
+    def test_score_up_keeps_fix(self, outputs_tmp):
+        gw = MagicMock()
+        result, _ = _run_fix(self._base(80, _visual(90, [])), gw)
+        assert result["yuwen_visual_fix_rollback"] is False
+        assert result["yuwen_visual_fix_pending"] is False
+        assert "保留修复版" in result["yuwen_visual_fix_note"]
+        gw.chat.assert_not_called()  # 对比阶段不调 LLM
+
+    def test_score_flat_keeps_fix(self, outputs_tmp):
+        result, _ = _run_fix(self._base(80, _visual(80, [])), MagicMock())
+        assert result["yuwen_visual_fix_rollback"] is False
+
+    def test_score_down_rolls_back(self, outputs_tmp):
+        result, frames = _run_fix(self._base(80, _visual(60, [])),
+                                  MagicMock())
+        assert result["yuwen_visual_fix_rollback"] is True
+        assert result["yuwen_visual_fix_pending"] is False
+        # doc 与盘都回到备份版（"页1" 而非修复版内容）
+        assert result["yuwen_content"]["slides"][0]["elements"][0]["content"] \
+            == "页1"
+        assert _tmp_doc(outputs_tmp)["slides"][0]["elements"][0]["content"] \
+            == "页1"
+        assert "80 → 60" in result["yuwen_visual_fix_note"]
+        assert "已回滚原版" in result["yuwen_visual_fix_note"]
+        steps = [f for f in frames if f.get("type") == "step"
+                 and f["status"] == "running"]
+        assert steps[0]["label"] == "视觉修复复查"
+
+    def test_recheck_degraded_rolls_back(self, outputs_tmp):
+        """复查降级（无从对比）→ 质量棘轮：回滚交付经 V1 验证过的原版。"""
+        degraded = {"available": False, "reason": "未安装 LibreOffice",
+                    "score": 0, "pages": [], "issues": []}
+        result, _ = _run_fix(self._base(80, degraded), MagicMock())
+        assert result["yuwen_visual_fix_rollback"] is True
+        assert "已回滚原版" in result["yuwen_visual_fix_note"]
+
+    def test_missing_backup_keeps_status(self, outputs_tmp):
+        state = self._base(80, _visual(60, []))
+        state["yuwen_visual_fix_backup"] = {}
+        result, _ = _run_fix(state, MagicMock())
+        assert result["yuwen_visual_fix_rollback"] is False
+        assert "备份缺失" in result["yuwen_visual_fix_note"]
+
+
+class TestVisualReviewRollbackPassthrough:
+    """回滚重渲染后 visual_review 跳过复查：透传修复前帧，不重调 VLM。"""
+
+    def test_passthrough_without_vlm(self, outputs_tmp):
+        prev = _visual(85, [_issue("s01", sev="high")])
+        state = {"yuwen_params": PARAMS, "yuwen_content": _doc(3),
+                 "yuwen_visual": _visual(60, []),   # 修复后复查的旧结果
+                 "yuwen_visual_fix_rollback": True,
+                 "yuwen_visual_fix_prev_visual": prev}
+        # env 无 key：若透传逻辑未命中会走 available=false 降级——断言等价
+        # 于 prev 即证明走了透传分支
+        result, frames = _run(state)
+        assert result["yuwen_visual"] == prev
+        vf = _visual_frames(frames)
+        assert len(vf) == 1 and vf[0]["visual"] == prev
+        done = [f for f in frames if f.get("type") == "step"
+                and f["status"] == "done"][-1]
+        assert "未重跑 VLM" in done["detail"]
+
+    def test_no_passthrough_without_flag(self, outputs_tmp):
+        """无 rollback 标记：即使 prev_visual 在也不透传（正常重审降级路径）。"""
+        state = {"yuwen_params": PARAMS, "yuwen_content": _doc(3),
+                 "yuwen_visual_fix_prev_visual": _visual(85, [])}
+        result, _ = _run(state)
+        assert result["yuwen_visual"]["available"] is False  # 无 key 正常降级
+
+
+class TestVisualFixWiring:
+    """图接线：visual_review/visual_fix 条件边展开后目标齐全。"""
+
+    def test_nodes_and_edges(self):
+        from devpilot.agenthub.yuwen.graph import build_graph
+        graph = build_graph(gateway=MagicMock(), registry=MagicMock())
+        assert "visual_fix" in graph.nodes
+        edges = {(e.source, e.target) for e in graph.get_graph().edges}
+        assert ("visual_review", "visual_fix") in edges
+        assert ("visual_review", "report") in edges   # 放行分支仍在
+        assert ("visual_fix", "render") in edges      # 复查/回滚重渲染
+        assert ("visual_fix", "report") in edges      # 保留/没修成放行
+        assert ("render", "report") not in edges
+
+    def test_report_includes_fix_note(self, outputs_tmp):
+        """report 汇总拼入修复结论（回滚场景全貌可见）。"""
+        from devpilot.agenthub.yuwen.nodes.report import _make_report_node
+        frames: list = []
+        state = {"yuwen_params": PARAMS,
+                 "yuwen_files": [{"name": "a.pptx", "path": "/files/x",
+                                  "size": 1, "mime": "m"}],
+                 "yuwen_visual": _visual(80, [_issue("s01", sev="high")]),
+                 "yuwen_visual_fix_note":
+                     "视觉修复未提升（90 → 80 分），已回滚原版"}
+        result = asyncio.run(
+            _make_report_node(lambda f: frames.append(f))(state))
+        assert "视觉审查 80 分" in result["final_answer"]
+        assert "已回滚原版" in result["final_answer"]

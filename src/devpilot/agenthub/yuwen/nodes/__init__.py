@@ -11,6 +11,7 @@
 - gen_images:     AI 配图回填（可选增强）
 - render:         调 render_all.py 渲染三件套
 - visual_review:  渲染后视觉审查（PPTX→逐页图→qwen-vl，可选增强）
+- visual_fix:     视觉审查修复闭环（重生成问题页→重渲染→复查，降分回滚）
 - report:         汇总交付清单，推终帧
 
 页级工具（单页校验 / meta 合成 / LLM 调用签名适配）在 _page.py。
@@ -27,6 +28,7 @@ from .render import _make_render_node
 from .report import _make_report_node
 from .review import _make_review_node
 from .revise import _make_revise_node
+from .visual_fix import _make_visual_fix_node
 from .visual_review import _make_visual_review_node
 
 __all__ = [
@@ -41,5 +43,6 @@ __all__ = [
     "_make_gen_images_node",
     "_make_render_node",
     "_make_visual_review_node",
+    "_make_visual_fix_node",
     "_make_report_node",
 ]

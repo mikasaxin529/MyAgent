@@ -115,6 +115,7 @@
     "CARD_PAD": 0.2,
     "CONTENT_TOP": 1.45,
     "MAX_Y": 7.05,
-    "LINE_SP": 1.25
+    "LINE_SP": 1.25,
+    "numbered_header": false
   }
 }

@@ -10,12 +10,23 @@
 <div class="progress"></div>
 <div class="deck">
 {% for slide in slides %}
-  <section class="slide{% if slide.kind == 'cover' or slide.kind == 'end' %} cover{% endif %}" id="{{ slide.id }}">
+  <section class="slide{% if slide.kind == 'cover' or slide.kind == 'end' %} cover{% endif %}{% if slide.kind == 'cover' and slide._bg_src %} has-bg{% endif %}" id="{{ slide.id }}">
+    {% if slide.kind == 'cover' and slide._bg_src %}<div class="cover-bg" style="background-image:url('{{ slide._bg_src }}')"></div><div class="cover-shade"></div>{% endif %}
+    {% if slide.kind == 'toc' %}
+    <div class="toc-wrap">
+      <div class="toc-figure{% if slide._toc_img %} has-img{% endif %}"{% if slide._toc_img %} style="background-image:url('{{ slide._toc_img }}')"{% endif %}>
+        <div class="toc-word">目 录</div><div class="toc-en">CONTENTS</div>
+      </div>
+      <div class="toc-list">
+        {% for item in slide._toc_entries %}<div class="toc-item"><i>{{ '%02d'|format(loop.index) }}</i><span>{{ item }}</span></div>{% endfor %}
+      </div>
+    </div>
+    {% else %}
     {% if slide.kind not in ['cover','end'] %}
-    <div class="title-bar">
+    {% if slide._num_header %}{{ slide._num_header|safe }}{% else %}<div class="title-bar">
       <span>{{ slide.title }}</span>
       {% if meta.periods and meta.periods > 1 %}<span class="period-tag">第 {{ slide.period|default(1) }} 课时</span>{% endif %}
-    </div>
+    </div>{% endif %}
     {% endif %}
     {% if slide.kind == 'cover' %}
       <div class="cover-title">{{ slide.title }}</div>
@@ -27,6 +38,7 @@
       {{ render_element(el)|safe }}
     {% endfor %}
     </div>
+    {% endif %}
   </section>
 {% endfor %}
 </div>

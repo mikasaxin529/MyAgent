@@ -42,8 +42,11 @@ ELEMENT_TYPES = {
     "board",          # { title, structure:[{node, children?[...]}] }   板书
     "discussion",     # { question, hint?, form:同桌互说|小组讨论|开火车|全班交流 }
     "evaluation",     # { rubric:[{criterion, levels:[{star,desc}]}] }   评价量表
+    # 版式专用（对标商业课件 2026-09：闯关练习 / 四格图解 / 目录）
+    "challenge",      # { items:[{stage:"第一关", title:"填一填", question, options?:[str], answer?, hint?}] }
+    "scene-strip",    # { scenes:[{caption}] ×4 }  四格连环画，图由生图管线单张 2×2 出
     # 媒体/辅助
-    "image",          # { src, caption? }
+    "image",          # { src, caption?, background?:bool, height? }
     "note",           # { content }   教师备注，HTML 默认隐藏
     "divider",        # {}            分隔
 }
@@ -57,7 +60,7 @@ DEFAULT_PERIODS = {
 }
 
 # 主题包名（common/themes/*.json）；未知值 normalize 时归一 default
-LESSON_THEMES = {"default", "fresh-blue", "warm-green"}
+LESSON_THEMES = {"default", "fresh-blue", "warm-green", "mint-green"}
 
 REQUIRED_META = ("title", "grade", "lessonType")
 
@@ -92,6 +95,15 @@ _TYPE_ALIASES = {
     "audio": "note",            # schema 无 audio，语义最近的教师备注
     "cover": "divider",
     "ending": "divider",
+    "challenging": "challenge",         # 形容词形态
+    "challenge-card": "challenge",      # 复合名漂移
+    "quiz": "challenge",                # 测验 → 闯关练习（语义最近）
+    "exercise": "challenge",
+    "four-panel": "scene-strip",        # 四格图解的英文直译
+    "four-grid": "scene-strip",
+    "comic": "scene-strip",
+    "scene-strip-4": "scene-strip",
+    "picture-strip": "scene-strip",
 }
 
 # 命名风格变体 → 规范连字符名。模型写 word_card / wordCard / WordCard /
@@ -383,6 +395,39 @@ def normalize(doc: dict) -> dict:
             if el.get("type") == "word-card" and "cards" not in el:
                 if "content" in el and "char" not in el:
                     el["char"] = el.pop("content")
+            # challenge: 别名键搬运（questions/levels → items；prompt→question；
+            # 选项 A/B 键 → options 数组）——只改键名不丢内容
+            if el.get("type") == "challenge":
+                for k in ("questions", "levels", "challenges", "rounds"):
+                    if isinstance(el.get(k), list) and "items" not in el:
+                        el["items"] = el.pop(k)
+                        break
+                items = el.get("items")
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and "question" not in it:
+                            for k in ("prompt", "content", "text", "q"):
+                                if isinstance(it.get(k), str) and it[k].strip():
+                                    it["question"] = it.pop(k)
+                                    break
+                        if isinstance(it, dict) and not isinstance(it.get("options"), list):
+                            # 散装 A/B 键 → options 数组
+                            opts = [it.pop(k) for k in ("A", "B", "C", "D")
+                                    if isinstance(it.get(k), str)]
+                            if opts:
+                                it["options"] = opts
+            # scene-strip: frames/panels → scenes；字符串项 → {caption}
+            if el.get("type") == "scene-strip":
+                for k in ("frames", "panels", "cells", "scenes"):
+                    if isinstance(el.get(k), list) and "scenes" not in el:
+                        el["scenes"] = el.pop(k)
+                        break
+                scenes = el.get("scenes")
+                if isinstance(scenes, list):
+                    el["scenes"] = [
+                        {"caption": s} if isinstance(s, str) else s
+                        for s in scenes if isinstance(s, (str, dict))
+                    ]
             # 散装 word-card（每元素一张卡）→ 聚合进一个 cards[]
             if el.get("type") == "word-card" and "cards" not in el:
                 card = {k: el[k] for k in

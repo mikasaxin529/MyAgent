@@ -1,4 +1,4 @@
-"""gen_images 节点：AI 生图回填 image 元素的空 src（可选增强，不阻断）。
+"""gen_images 节点：AI 生图回填空 src 的 image / scene-strip 元素（可选增强）。
 
 无 DASHSCOPE_API_KEY → 直接跳过。有 key → asyncio.Semaphore(3) 并发生图，
 成功落盘 assets/{page_id}_{i}.png 并把 el["src"] 写成**相对 session 目录**
@@ -11,6 +11,13 @@
 - image_style：IMAGE_STYLES 五档，默认"绘本"；非法值回退默认
 - image_count：minimal（默认，上限 max(2, 课时数)，按优先级截断控成本）/
   all（全部空 src 元素）/ none（跳过生图）
+
+生图目标三角色（prompt 与优先级不同）：
+- 全出血背景图（image.background=true，封面页）：横构图主体居下、上方
+  留呼吸空间压标题；优先级最高（观感杠杆最大）
+- 四格连环画（scene-strip）：单张图田字 2×2 四格，四段 caption 依次入画，
+  四格人物画风一致——单张出图天然保证风格统一还省成本
+- 普通内嵌插图：既有逻辑
 """
 from __future__ import annotations
 
@@ -56,14 +63,45 @@ def _image_prompt(el: dict, page: dict, meta: dict,
     """元素 caption + 页标题 + 课文名拼中文生图提示词（风格段参数化）。
 
     课件插图要的是"符合小学课堂语境的插画"，明确排除文字/水印。
+    按元素角色分三种 prompt：普通内嵌图 / 全出血背景图 / 四格连环画。
     """
+    style_seg = IMAGE_STYLES.get(style, IMAGE_STYLES[DEFAULT_IMAGE_STYLE])
+
+    # 全出血背景图（封面/导入页）：横构图、留出中心视觉呼吸——文字压图
+    if el.get("background"):
+        caption = str(el.get("caption") or "").strip()
+        parts = [
+            f"小学语文课件封面背景插画：《{meta.get('title', '')}》",
+            f"画面内容：{caption}" if caption else "贴合课文意境的场景",
+            "横幅全景构图，画面主体居下三分之一，上方留出干净的色彩空间供压标题",
+            f"{style_seg}，无文字，无水印",
+        ]
+        return "；".join(p for p in parts if p)
+
+    # 四格连环画（scene-strip）：单张图内 2×2 四格，四段 caption 依次入画
+    scenes = el.get("scenes")
+    if isinstance(scenes, list) and scenes:
+        caps = [str(s.get("caption") or "").strip() for s in scenes
+                if isinstance(s, dict)][:4]
+        caps = [c for c in caps if c]
+        seg = "；".join(f"第{i+1}格：{c}" for i, c in enumerate(caps))
+        parts = [
+            f"小学语文课件四格连环画：《{meta.get('title', '')}》"
+            f"{page.get('title', '')}",
+            f"一张图内画田字排列的四格连环画（左上→右上→左下→右下按顺序），{seg}"
+            if seg else "一张图内画田字排列的四格连环画，按页面主题分四个情节",
+            "四格之间用细白线分隔，人物形象与画风四格保持一致",
+            f"{style_seg}，无文字，无水印",
+        ]
+        return "；".join(p for p in parts if p)
+
+    # 普通内嵌插图
     caption = str(el.get("caption") or "").strip()
     parts = [
         f"小学语文课件插画：《{meta.get('title', '')}》",
         f"页面主题：{page.get('title', '')}",
         f"画面内容：{caption}" if caption else "画面贴合课文情境",
-        f"{IMAGE_STYLES.get(style, IMAGE_STYLES[DEFAULT_IMAGE_STYLE])}，"
-        "无文字，无水印",
+        f"{style_seg}，无文字，无水印",
     ]
     return "；".join(p for p in parts if p)
 
@@ -86,11 +124,19 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
             _step(emitter, "gen_images", "AI 配图", "done", "用户选择不配图")
             return {"yuwen_content": doc, "nodes_visited": visited}
 
-        # 收集待配图元素：(page, element, 元素在该页的序号)
+        # 收集待配图元素：(page, element, 元素在该页的序号)。
+        # image 元素看空 src；scene-strip 看顶层空 src（四格图解一页一张，
+        # src 挂元素顶层，渲染层据此嵌图）
         targets: list[tuple[dict, dict, int]] = []
         for page in slides:
             for i, el in enumerate(page.get("elements") or []):
-                if (isinstance(el, dict) and el.get("type") == "image"
+                if not isinstance(el, dict):
+                    continue
+                t = el.get("type")
+                if (t == "image"
+                        and not str(el.get("src") or "").strip()):
+                    targets.append((page, el, i))
+                elif (t == "scene-strip"
                         and not str(el.get("src") or "").strip()):
                     targets.append((page, el, i))
 
@@ -118,13 +164,20 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
 
             def _rank(t: tuple[dict, dict, int]) -> int:
                 page, el, _i = t
-                if str(page.get("kind", "")) == "cover":
+                # 全出血封面背景图是观感杠杆最大的单图，永远最优先
+                if (str(page.get("kind", "")) == "cover"
+                        and el.get("background")):
                     return 0
-                if str(page.get("id", "")) in first_page_ids:
+                if str(page.get("kind", "")) == "cover":
                     return 1
-                if str(el.get("caption") or "").strip():
+                # 四格图解是版式页核心，仅次于封面
+                if el.get("type") == "scene-strip":
                     return 2
-                return 3
+                if str(page.get("id", "")) in first_page_ids:
+                    return 3
+                if str(el.get("caption") or "").strip():
+                    return 4
+                return 5
 
             targets.sort(key=_rank)  # list.sort 稳定，同级保持原文档顺序
             skipped = max(0, len(targets) - limit)
@@ -162,7 +215,8 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
                     fname = f"{page_id}_{i}.png"
                     (assets_dir / fname).write_bytes(data)
                     # src = 相对 session 目录路径（正斜杠，跨平台一致）；
-                    # 渲染器据此拼绝对路径（契约同步 renderer agent）
+                    # 渲染器据此拼绝对路径（契约同步 renderer agent）。
+                    # image 与 scene-strip 都是元素顶层 src，回填逻辑一致
                     el["src"] = f"assets/{fname}"
                     ok += 1
                 except Exception:  # noqa: BLE001 - 单张失败走占位

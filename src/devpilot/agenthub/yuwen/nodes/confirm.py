@@ -35,6 +35,8 @@ _PREFIX_CONFIRM = ("确认", "可以", "好的", "没问题", "开始生成", "�
 # 主题切换词表 → 目标主题（确定性映射，不经 LLM；顺序即优先级）
 _THEME_MAP = [
     (("fresh-blue", "青蓝", "蓝色", "蓝"), "fresh-blue"),
+    # mint-green 须排在 warm-green 前："青绿"含"绿"字，后被则被墨绿误捕
+    (("mint-green", "薄荷", "青绿"), "mint-green"),
     (("warm-green", "墨绿", "绿色", "绿"), "warm-green"),
     (("default", "默认", "橙色", "橘"), "default"),
 ]

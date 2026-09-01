@@ -165,6 +165,17 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
         if "visual_review" not in visited:
             visited.append("visual_review")
 
+        # 回滚后重渲染透传：doc 已回到修复前版本，再转 PDF 调 VLM 只会
+        # 得到与 prev_visual 相同的结果——直接透传修复前审查帧，省一次
+        # 完整审查的钱（回滚链路见 nodes/visual_fix.py）。
+        if state.get("yuwen_visual_fix_rollback"):
+            prev = state.get("yuwen_visual_fix_prev_visual") or {}
+            if prev.get("available"):
+                _step(emitter, "visual_review", "视觉审查", "done",
+                      "修复已回滚，透传修复前审查结果（未重跑 VLM）")
+                _emit(emitter, {"type": "visual", "visual": prev})
+                return {"yuwen_visual": prev, "nodes_visited": visited}
+
         try:
             return await _review(state, visited)
         except Exception as exc:  # noqa: BLE001 - 任何整体异常降级，绝不阻断

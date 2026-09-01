@@ -8,6 +8,12 @@ export interface AgentManifest {
   placeholder: string;
 }
 
+/**
+ * 通用步骤帧（step 帧，id 由各节点自定，前端按 id 去重更新、透传展示）。
+ * yuwen 管线 step id 全集：extract_params / gen_outline / confirm / gen_slides /
+ * gen_plan / review / revise / gen_images / render / visual_review /
+ * visual_fix（视觉修复闭环进度，label 为"视觉修复"或"视觉修复复查"）/ report。
+ */
 export interface StepItem {
   id: string;
   label: string;

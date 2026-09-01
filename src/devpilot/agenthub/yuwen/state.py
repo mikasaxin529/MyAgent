@@ -44,6 +44,14 @@ class YuwenState(TypedDict, total=False):
     yuwen_error: str             # 内容生成错误标记（gen_content 失败时写入，render/report 透传优先展示）
     yuwen_files: list            # [{name, path, size, mime}, ...]
     yuwen_visual: dict           # 视觉审查结果 {available, reason, score, pages, issues}（帧契约见 graph.py）
+    # 视觉修复闭环（visual_fix 节点，单轮 + 降分回滚，详见 nodes/visual_fix.py）
+    yuwen_visual_fix_rounds: int      # 已用修复轮数（上限 1，条件边据此放行）
+    yuwen_visual_fix_backup: dict     # 修复前 doc 深拷贝（降分时回滚用）
+    yuwen_visual_fix_prev_score: int  # 修复前视觉分数（复查后对比决定是否回滚）
+    yuwen_visual_fix_prev_visual: dict  # 修复前 visual 帧（回滚后透传，描述交付物）
+    yuwen_visual_fix_pending: bool    # 已修页待复查标记（visual_fix 对比阶段入口）
+    yuwen_visual_fix_rollback: bool   # 已回滚标记（visual_review 据此跳过复查直接透传）
+    yuwen_visual_fix_note: str        # 修复结论（report 汇总展示）
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +192,8 @@ def _outline_summary(outline: dict) -> str:
 # 仍路由 confirm，由 confirm 从盘上（_find_pending_session）找回会话。
 _CONFIRM_WORDS = ("确认", "可以", "没问题", "开始生成", "直接生成", "就这样",
                   "同意", "ok", "OK", "好", "行", "继续")
-_THEME_WORDS = ("blue", "fresh", "green", "warm", "主题", "蓝色", "青蓝",
-                "绿色", "墨绿", "橙色", "默认")
+_THEME_WORDS = ("blue", "fresh", "green", "warm", "mint", "主题", "蓝色", "青蓝",
+                "绿色", "墨绿", "青绿", "薄荷", "橙色", "默认")
 # 配图偏好切换触发词（与 confirm._IMAGE_TRIGGERS 保持一致）：
 # "配图用水彩""插图多一些""不要配图"也是对大纲轮的应答，需兜底路由进 confirm
 _IMAGE_WORDS = ("配图", "插图", "生图")

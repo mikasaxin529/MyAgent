@@ -8,12 +8,13 @@ export interface OutlineCardProps {
   onChipClick?: (text: string) => void;
 }
 
-/** theme id → 中文名（未知主题原样显示） */
+/** theme id → 中文名（未知主题原样显示）。键与后端 LESSON_THEMES 一致：
+ * default / fresh-blue / warm-green / mint-green。 */
 const THEME_NAMES: Record<string, string> = {
   default: "暖橙",
-  qinglan: "青蓝",
-  moqing: "青绿",
-  molv: "墨绿",
+  "fresh-blue": "青蓝",
+  "warm-green": "墨绿",
+  "mint-green": "青绿",
 };
 
 /** 判断 chip 语义：确认类为主按钮，主题类带调色板图标 */

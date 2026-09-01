@@ -64,6 +64,9 @@ def _theme_css_vars() -> str:
     # 派生量：导航底色 = 标题色 85% 透明；其余取主题扩展键
     decls.append(("--note-bg", pal.get("NOTE_BG", "FFF7EE")))
     decls.append(("--nav-hover", pal.get("NAV_HOVER", pal["ACCENT_DK"])))
+    # 闯关卡正确项/警示：语义色（商业课件版式新增，缺失回退绿/红）
+    decls.append(("--success", pal.get("SUCCESS", "3E8E5A")))
+    decls.append(("--danger", pal.get("DANGER", "E2574C")))
     lines = "".join(f"  {n}: #{v};\n" for n, v in decls)
     return (":root {\n" + lines +
             f"  --nav-bg: rgba({_rgb_triplet(pal['TITLE_TEXT'])},0.85);\n}}")
@@ -71,6 +74,27 @@ def _theme_css_vars() -> str:
 
 def _esc(s: str) -> str:
     return html.escape(str(s), quote=True)
+
+
+def _answer_index(it: dict, options: list) -> int:
+    """challenge 项正确答案下标：'A'/'B' 字母或直接文本命中，未匹配 -1。"""
+    ans = str(it.get("answer", "")).strip()
+    if not ans or not options:
+        return -1
+    if len(ans) == 1 and ans.upper() in "ABCD" and ord(ans.upper()) - ord("A") < len(options):
+        return ord(ans.upper()) - ord("A")
+    for k, o in enumerate(options):
+        if o == ans or ans in o:
+            return k
+    return -1
+
+
+def _page_header(sj: dict, num: int) -> str:
+    """内容页头部：mint 主题（numbered_header）出编号章节头，其余经典短横头。"""
+    if T.L.get("numbered_header", False) and num:
+        return (f'<div class="num-header"><div class="nh-num">{num:02d}</div>'
+                f'<div class="nh-title">{_esc(sj.get("title",""))}</div></div>')
+    return ""
 
 
 def render_element(el: dict) -> str:
@@ -213,7 +237,56 @@ def render_element(el: dict) -> str:
     if t == "note":
         return f'<div class="note">{_esc(el.get("content",""))}</div>'
 
+    if t == "challenge":
+        # 闯关练习卡：徽章 + 大字题 + 选项子卡（正确项高亮）+ hint 小字条
+        cards = []
+        for i, it in enumerate(el.get("items", [])):
+            if not isinstance(it, dict):
+                continue
+            head = " · ".join(x for x in (str(it.get("stage", "")).strip(),
+                                          str(it.get("title", "")).strip()) if x)
+            head = head or f"第{'一二三四五'[i]}关"
+            opts = [str(o) for o in (it.get("options") or []) if str(o).strip()][:4]
+            ci = _answer_index(it, opts)
+            opts_html = ""
+            if opts:
+                cells = []
+                for k, o in enumerate(opts):
+                    cls = "ch-opt correct" if k == ci else "ch-opt"
+                    star = '<span class="ch-star">★</span>' if k == ci else ""
+                    cells.append(f'<div class="{cls}"><b>{"ABCD"[k]}.</b> '
+                                 f'{_esc(o)}{star}</div>')
+                opts_html = f'<div class="ch-opts">{"".join(cells)}</div>'
+            hint = (f'<div class="ch-hint">💡 {_esc(it["hint"])}</div>'
+                    if it.get("hint") else "")
+            cards.append(
+                f'<div class="ch-card">'
+                f'<div class="ch-badge">{_esc(head)}</div>'
+                f'<div class="ch-q" data-read="{_esc(it.get("question",""))}">'
+                f'{_esc(it.get("question",""))}</div>'
+                f'{opts_html}{hint}</div>')
+        return f'<div class="elem-challenge">{"".join(cards)}</div>'
+
+    if t == "scene-strip":
+        # 四格图解：大图 + CSS 十字分格线 + 四行 caption（圆点轮换高亮色）
+        src = el.get("src", "")
+        if src and Path(src).is_file():
+            src = _rel_to_out(src)
+        else:
+            src = ""
+        img_html = (f'<div class="ss-img"><img src="{_esc(src)}" alt=""></div>'
+                    if src else
+                    '<div class="ss-img ss-ph">🖼 四格情景图（待生图回填）</div>')
+        caps = []
+        for i, sc in enumerate(el.get("scenes", [])[:4]):
+            cap = sc.get("caption", "") if isinstance(sc, dict) else str(sc)
+            caps.append(f'<li class="hl{i % 4 + 1}"><i>{i + 1}</i>'
+                        f'<span>{_esc(cap)}</span></li>')
+        return f'<div class="elem-scene">{img_html}<ol class="ss-caps">{"".join(caps)}</ol></div>'
+
     if t == "image":
+        if el.get("background"):
+            return ""   # 全出血底图由页面模板层处理
         src = el.get("src", "")
         cap = el.get("caption")
         if src and Path(src).is_file():
@@ -261,6 +334,53 @@ def _tone_class(hexcolor: str) -> str:
     return "0"
 
 
+def _toc_entries(sj: dict) -> list:
+    """目录页条目：第一个 list 元素 items，兜底 heading.content。"""
+    for el in sj.get("elements", []):
+        if el.get("type") == "list":
+            return [str(x) for x in el.get("items", [])]
+    return [str(el.get("content", "")) for el in sj.get("elements", [])
+            if el.get("type") == "heading" and el.get("content")]
+
+
+def _toc_image(sj: dict) -> str:
+    """目录页左栏图：第一个有效 src 的 image 元素（相对输出目录）。"""
+    for el in sj.get("elements", []):
+        if el.get("type") == "image" and not el.get("background"):
+            src = el.get("src", "")
+            if src and Path(src).is_file():
+                return _rel_to_out(src)
+    return ""
+
+
+def _bg_image(sj: dict) -> str:
+    """封面全出血底图：background:True 且 src 有效的 image，无则空。"""
+    for el in sj.get("elements", []):
+        if el.get("type") == "image" and el.get("background"):
+            src = el.get("src", "")
+            if src and Path(src).is_file():
+                return _rel_to_out(src)
+    return ""
+
+
+def _annotate_slides(slides: list) -> list:
+    """给模板预处理每页渲染上下文：编号章节头 / 全出血底图 / toc 条目。"""
+    num = 0
+    for sj in slides:
+        sj.setdefault("_bg_src", "")
+        sj.setdefault("_num_header", "")
+        kind = sj.get("kind", "")
+        if kind == "cover":
+            sj["_bg_src"] = _bg_image(sj)
+        elif kind == "toc":
+            sj["_toc_entries"] = _toc_entries(sj)
+            sj["_toc_img"] = _toc_image(sj)
+        elif kind not in ("end",):
+            num += 1
+            sj["_num_header"] = _page_header(sj, num)
+    return slides
+
+
 def render(doc: dict, out_path: str) -> str:
     """渲染 doc → HTML 文件（按课时分文件）。返回主文件路径。"""
     from jinja2 import Environment, FileSystemLoader
@@ -290,8 +410,10 @@ def render(doc: dict, out_path: str) -> str:
     main_path = str(out_path)
     paths = []
     for pi, per in enumerate(periods):
-        per_slides = [s for s in doc["slides"] if s.get("period", 1) == per]
-        html_str = tmpl.render(meta=meta, slides=per_slides, period=per)
+        per_slides = _annotate_slides(
+            [s for s in doc["slides"] if s.get("period", 1) == per])
+        html_str = tmpl.render(meta=meta, slides=per_slides, period=per,
+                               numbered_header=bool(T.L.get("numbered_header", False)))
         if pi == 0:
             fp = main_path
         else:

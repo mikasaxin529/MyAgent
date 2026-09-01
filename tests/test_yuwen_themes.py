@@ -84,6 +84,18 @@ class TestThemeLoading:
             assert set(th.layout) >= {"MARGIN_X", "CONTENT_TOP", "MAX_Y"}
             assert 0 in th.pal["TONE"] and 4 in th.pal["TONE"]
 
+    def test_load_mint_green(self, scripts_path):
+        """mint-green 主题包加载（任务 #22 新增，对标商业课件配色）。"""
+        from common.themes import load_theme
+        th = load_theme("mint-green")
+        assert th.name == "mint-green"
+        for key in ("BG", "BG_CARD", "ACCENT", "ACCENT2", "ACCENT3",
+                    "DIVIDER", "FOOT", "BORDER", "HL", "TONE", "HIGHLIGHTS"):
+            assert key in th.pal, f"mint-green 缺 pal.{key}"
+        assert th.pal["ACCENT"] == "2DD4BF"
+        assert set(th.font_scale) >= {"低", "中", "高"}
+        assert 0 in th.pal["TONE"] and 4 in th.pal["TONE"]
+
     def test_unknown_theme_falls_back(self, scripts_path, capsys):
         from common.themes import load_theme
         th = load_theme("not-a-theme")
@@ -158,7 +170,13 @@ class TestDesignTokensProxy:
 class TestDefaultRegression:
     """default 主题渲染 = 改造前产物：与 git HEAD 代码渲染结果对比
     （pptx 内部条目全等；html 去 :root 后全等；docx 修漂移豁免，
-    验证结构一致 + 仅色系变化）。"""
+    验证结构一致 + 仅色系变化）。
+
+    注意：本测试生成层 v2 改造（任务 #23）后预期为红——工作区
+    jingyesi.json 已追加 toc/scene-strip/challenge 三页示例，而对比基准
+    是 git HEAD 的旧版输入，两边页数不同必然不一致。改造提交后 HEAD
+    即含新页，本测试自动回绿，无需为它回退示例改动。
+    """
 
     def test_default_render_identical_to_head(self, tmp_path):
         """金标准：与 git HEAD 代码对同一输入渲染的 pptx 内部条目完全一致。"""

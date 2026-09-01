@@ -10,7 +10,7 @@ import copy
 import inspect
 
 # 主题枚举（与 outline prompt / confirm 主题切换词表保持一致）
-THEMES = ("default", "fresh-blue", "warm-green")
+THEMES = ("default", "fresh-blue", "warm-green", "mint-green")
 
 
 def _call_llm(gateway, method: str, msgs, model_kwargs: dict, **kw):

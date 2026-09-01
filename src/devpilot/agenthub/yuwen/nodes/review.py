@@ -23,6 +23,13 @@ from ._page import _call_llm
 # 低段每页元素数上限（学段密度约束，结构层预检用）
 _MAX_ELEMS = {"低段": 4, "中段": 5, "高段": 6}
 
+# 版式专用栏目：toc 固定 2 元素、challenge/scene-strip 常为 1 元素——
+# 元素少是这类页的正常形态，结构预检单列标注，避免 LLM 按密度误判扣分。
+_FORMATTED_KINDS = {"toc", "challenge", "scene-strip"}
+
+# 每课时页数对标指引上限：超过即明显偏多（收敛版：每课时 10-14 页）
+_PAGE_TARGET_MAX = 16
+
 
 def _structure_report(doc: dict) -> str:
     """结构层预检：程序统计（页数/kind 序列/period 分布/密度/空元素），
@@ -31,7 +38,8 @@ def _structure_report(doc: dict) -> str:
     meta = doc.get("meta", {})
     stage = meta.get("stage", "")
     periods = meta.get("periods", 1)
-    lines = [f"- 共 {len(slides)} 页，{periods} 课时，学段 {stage or '未知'}"]
+    lines = [f"- 共 {len(slides)} 页，{periods} 课时，学段 {stage or '未知'}",
+             "- 对标指引：每课时 10-14 页（低段取上限），单页宁精不滥"]
 
     # kind 序列
     kinds = [s.get("kind", "") for s in slides]
@@ -45,17 +53,27 @@ def _structure_report(doc: dict) -> str:
     lines.append(f"- 课时分布：{dict(sorted(dist.items()))}")
     if int(periods) >= 2 and len(dist) < 2:
         lines.append("  ⚠ 多课时课件但页面 period 未分出两个课时")
+    for p in sorted(dist):
+        if dist[p] > _PAGE_TARGET_MAX:
+            lines.append(f"  ⚠ 第 {p} 课时 {dist[p]} 页，明显超每课时 10-14 页指引，建议合并同类页")
 
     # 密度与空元素
     max_n = _MAX_ELEMS.get(stage, 6)
     density_bad = []
     empty_pages = []
+    formatted_pages = []
     for s in slides:
         elems = s.get("elements", [])
-        if len(elems) > max_n:
+        if s.get("kind") in _FORMATTED_KINDS and elems:
+            # 版式栏目页：1-2 个元素是设计形态（目录左图右列/闯关单卡/四格单画卷），
+            # 不并入密度告警，单独标注供 LLM 核对
+            formatted_pages.append(f"{s.get('id')}({s.get('kind')},{len(elems)}元素)")
+        elif len(elems) > max_n:
             density_bad.append(f"{s.get('id')}({len(elems)}个)")
         if not elems:
             empty_pages.append(str(s.get("id")))
+    if formatted_pages:
+        lines.append(f"- 版式栏目页（元素少属正常，勿按密度扣分）：{', '.join(formatted_pages)}")
     if density_bad:
         lines.append(f"- ⚠ 元素超密度上限({max_n})的页：{', '.join(density_bad)}")
     if empty_pages:

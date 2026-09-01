@@ -11,12 +11,16 @@ def _visual_note(state: YuwenState) -> str:
 
     未跑（available=false）注明原因——用户至少知道审查为什么缺席；
     state 里完全没有 visual 字段（旧会话 / 渲染前就 END）返回空串。
+    跑过视觉修复闭环（有 note）时，用最新一轮审查分数 + 修复结论描述——
+    回滚后 visual 是透传的修复前分数，但交付物是原版，修复结论说明全貌。
     """
     visual = state.get("yuwen_visual") or {}
+    fix_note = state.get("yuwen_visual_fix_note") or ""
     if not visual:
-        return ""
+        return fix_note  # 无审查帧但有修复说明（异常路径），仍展示
     if not visual.get("available"):
-        return f"视觉审查未启用（{visual.get('reason', '未知原因')}）"
+        base = f"视觉审查未启用（{visual.get('reason', '未知原因')}）"
+        return f"{base}；{fix_note}" if fix_note else base
     sev_count: dict[str, int] = {}
     for issue in visual.get("issues") or []:
         sev = str(issue.get("severity") or "low")
@@ -28,6 +32,8 @@ def _visual_note(state: YuwenState) -> str:
         parts = [f"{order[s]} {sev_count[s]}"
                  for s in ("high", "medium", "low") if sev_count.get(s)]
         note += f"（{' / '.join(parts)}）"
+    if fix_note:
+        note += f"；{fix_note}"
     return note
 
 

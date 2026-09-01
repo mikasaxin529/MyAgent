@@ -18,6 +18,7 @@
 - `slides` 驱动 .pptx 与 .html；
 - `lessonPlan`(+`handout`) 驱动 .docx 教案；
 - 一份 JSON 出三份成品，天然分离。
+- `meta.theme`（可选）：default 暖橙 / fresh-blue 青蓝 / warm-green 墨绿 / **mint-green 青绿**（对标商业课件配色，默认 default）。
 
 ## meta（元数据）
 
@@ -53,7 +54,7 @@
 ```
 
 - `id`：页码（s1, s2...），缺省自动补 `s{i+1}`。
-- `kind`：栏目类型，用于标识（cover/word-cards/revision/精读品析/...）。
+- `kind`：栏目类型，用于标识（cover/toc/word-cards/revision/精读品析/...）。`toc` = 目录页（渲染器专用版式：左图栏 + 两列条目）。
 - `period`：所属课时（精读分 1/2；其他默认 1）。渲染器据此分文件输出并在封面标注"第X课时"。
 - `elements`：本页内容元素数组，每个有 `type` 字段决定渲染方式。
 
@@ -82,13 +83,54 @@
 | discussion | question, hint?, form | 课堂互动：form=同桌互说/小组讨论/开火车/全班交流 |
 | evaluation | rubric[] | 评价量表：`{criterion, levels:[{star,desc}]}` |
 
+### 版式专用（对标商业课件）
+
+| type | 字段 | 说明 |
+|------|------|------|
+| challenge | items[] | 闯关练习卡：`{stage:"第一关", title:"填一填", question, options?:["A…","B…"], answer?, hint?}`，一页 1-2 关 |
+| scene-strip | scenes[] | 四格情景图解：`{caption}` ×4（按顺序对应四格画面），配图由生图管线单张 2×2 连环画出 |
+
 ### 媒体/辅助
 
 | type | 字段 | 说明 |
 |------|------|------|
-| image | src, caption? | 图片：src 为相对路径或 URL |
+| image | src, caption?, background?, height? | 图片：src 相对路径；`background:true` = 全出血背景图（铺满整页，标题压图，仅封面/导入页用）；height 英寸数 |
 | note | content | 教师备注，HTML 默认隐藏可点开 |
 | divider | - | 分隔页/过渡 |
+
+#### challenge 示例
+
+```json
+{ "type": "challenge", "items": [
+  { "stage": "第一关", "title": "填一填",
+    "question": "床前明月□，疑是地上□", "answer": "光/霜", "hint": "想一想诗人看到了什么" },
+  { "stage": "第二关", "title": "选一选",
+    "question": "「思故乡」表达了诗人什么感情？",
+    "options": ["思念家乡", "喜爱月光"], "answer": "A", "hint": "抬头望明月，低头思故乡" }
+]}
+```
+
+#### scene-strip 示例
+
+```json
+{ "type": "scene-strip", "scenes": [
+  { "caption": "床前明月光——诗人床边洒满月光" },
+  { "caption": "疑是地上霜——月光像秋霜一样白" },
+  { "caption": "举头望明月——抬头望着天上圆月" },
+  { "caption": "低头思故乡——低下头思念家乡" }
+]}
+```
+
+#### 全出血背景图示例（封面）
+
+```json
+{ "id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+  "elements": [
+    { "type": "image", "src": "", "background": true, "caption": "月夜窗前意境图" }
+  ]
+}
+```
+（src 留空由 gen_images 回填；caption 同时是生图提示词素材）
 
 ## word-card.cards[] 字段
 

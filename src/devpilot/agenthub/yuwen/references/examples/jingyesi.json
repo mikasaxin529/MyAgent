@@ -102,6 +102,41 @@
           { "node": "情感：思乡之情", "children": [] }
         ]}
       ]
+    },
+    {
+      "id": "s10", "kind": "toc", "title": "目录", "period": 1,
+      "elements": [
+        { "type": "image", "src": "", "caption": "月夜思乡卷轴图" },
+        { "type": "list", "items": [
+          "走近诗人", "初读节奏", "我会认", "诗意解析",
+          "四格图解", "悟情意象", "背诵指导", "闯关练习"
+        ], "ordered": false }
+      ]
+    },
+    {
+      "id": "s11", "kind": "scene-strip", "title": "四格图解 · 诗句画意", "period": 1,
+      "elements": [
+        { "type": "scene-strip", "scenes": [
+          { "caption": "床前明月光——诗人床边洒满月光" },
+          { "caption": "疑是地上霜——月光像秋霜一样白" },
+          { "caption": "举头望明月——抬头望着天上圆月" },
+          { "caption": "低头思故乡——低下头思念家乡" }
+        ]}
+      ]
+    },
+    {
+      "id": "s12", "kind": "challenge", "title": "闯关练习", "period": 1,
+      "elements": [
+        { "type": "challenge", "items": [
+          { "stage": "第一关", "title": "填一填",
+            "question": "床前明月□，疑是地上□", "answer": "光/霜",
+            "hint": "想一想诗人看到了什么" },
+          { "stage": "第二关", "title": "选一选",
+            "question": "「低头思故乡」表达了诗人什么感情？",
+            "options": ["思念家乡", "喜爱月光", "思念朋友"], "answer": "A",
+            "hint": "抬头望明月，低头思故乡" }
+        ]}
+      ]
     }
   ],
   "lessonPlan": {

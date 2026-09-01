@@ -11,6 +11,10 @@
   → render（subprocess 三件套）
   → visual_review（PPTX 转逐页图 → 百炼 qwen-vl 视觉审查，无 key/无
     LibreOffice 降级跳过，不阻断）
+  → visual_fix（视觉修复闭环，≤1 轮）：medium/high 且内容层可修的版面
+    问题 → 单页 LLM 重生成 → render 重渲染 → visual_review 复查；
+    分数不降保留新版，降分回滚备份再渲染原版（回滚后 visual_review 经
+    rollback 标记跳过复查，不再花 VLM 钱）。无可修问题/降级直接 report
   → report（交付汇总）
 
 跨轮状态机原理（本图的心脏）：
@@ -42,6 +46,10 @@
                                 pages: [{page_id, score, image: "/files/yuwen/<session>/review/sNN.png"}],
                                 issues: [{page_id, type, severity: low|medium|high,
                                           bbox: [x1,y1,x2,y2](0-1000归一化), suggestion}]}}
+  注意：visual_fix 闭环内 visual 帧可能发多次（修复后复查一次；回滚后
+  visual_review 经 rollback 标记透传修复前结果，不重调 VLM）——前端按
+  "最新帧覆盖"渲染即可，无新增帧类型；visual_fix 进度走通用 step 帧
+  （id=visual_fix, label=视觉修复/视觉修复复查）。
   meta.theme ∈ default / fresh-blue / warm-green（渲染器由 renderer agent 消费）。
   gen_images 回写的 image.src 是**相对 session 目录**路径（如 "assets/s03_2.png"），
   渲染器需解析为绝对路径。
@@ -49,7 +57,7 @@
 模型绑定：config/agents.yaml 的 yuwen_outline / yuwen_slide / yuwen_review
 三个键（"provider:model" 或空串走默认链）。分节点消费方：
   yuwen_outline → gen_outline + confirm（改纲 LLM）
-  yuwen_slide   → gen_slides + revise
+  yuwen_slide   → gen_slides + revise + visual_fix（问题页重生成）
   yuwen_review  → review + gen_plan
 注意：Gateway.chat 目前不支持 provider 参数（只有 stream_chat 支持），
 nodes/_page._call_llm 按签名探测传参，chat 绑定暂静默降级默认链。
@@ -71,8 +79,10 @@ from .nodes import (
     _make_report_node,
     _make_review_node,
     _make_revise_node,
+    _make_visual_fix_node,
     _make_visual_review_node,
 )
+from .nodes.visual_fix import _actionable_issues
 from .state import (
     YuwenState,
     _find_pending_session,
@@ -158,6 +168,33 @@ def _route_after_review(state: YuwenState) -> str:
     return "gen_images"
 
 
+def _route_after_visual(state: YuwenState) -> str:
+    """visual_review 出口路由（视觉修复闭环的总闸）。
+
+    - pending=True：修复已做完、刚复查回来 → 进 visual_fix 对比分数
+    - rounds≥1：闭环最多 1 轮 → report（复查对比除外，见上）
+    - 审查降级 / 无内容层可修 issue（含只有 low、只有渲染层类型）→ report
+    - 其余 → visual_fix 执行修复
+    判据用 _actionable_issues（与节点同一套挑选逻辑，不漂移）。
+    """
+    if state.get("yuwen_visual_fix_pending"):
+        return "visual_fix"
+    if int(state.get("yuwen_visual_fix_rounds") or 0) >= 1:
+        return "report"
+    visual = state.get("yuwen_visual") or {}
+    if not _actionable_issues(visual):
+        return "report"
+    return "visual_fix"
+
+
+def _route_after_fix(state: YuwenState) -> str:
+    """visual_fix 出口路由：修了待复查 → render；回滚了待重渲染 → render；
+    没修成 / 对比后保留新版 → report。"""
+    if state.get("yuwen_visual_fix_pending") or state.get("yuwen_visual_fix_rollback"):
+        return "render"
+    return "report"
+
+
 # ---------------------------------------------------------------------------
 # 图组装
 # ---------------------------------------------------------------------------
@@ -197,6 +234,7 @@ def build_graph(
     graph.add_node("gen_images", _make_gen_images_node(emitter))
     graph.add_node("render", _make_render_node(emitter))
     graph.add_node("visual_review", _make_visual_review_node(emitter))
+    graph.add_node("visual_fix", _make_visual_fix_node(gateway, emitter, kw_slide))
     graph.add_node("report", _make_report_node(emitter))
 
     # 入口
@@ -235,7 +273,19 @@ def build_graph(
     graph.add_edge("revise", "review")  # 修订后再评一轮
     graph.add_edge("gen_images", "render")
     graph.add_edge("render", "visual_review")
-    graph.add_edge("visual_review", "report")
+    # 视觉修复闭环：visual_review →（有可修问题且未修过）→ visual_fix →
+    # render（重渲染复查 / 回滚重渲染）→ visual_review（rollback 时透传
+    # 跳过）→ report。轮次闸门在 _route_after_visual（rounds≥1 放行）。
+    graph.add_conditional_edges(
+        "visual_review",
+        _route_after_visual,
+        {"visual_fix": "visual_fix", "report": "report"},
+    )
+    graph.add_conditional_edges(
+        "visual_fix",
+        _route_after_fix,
+        {"render": "render", "report": "report"},
+    )
     graph.add_edge("report", END)
 
     return graph.compile()

@@ -1002,6 +1002,74 @@ class TestGenImages:
         assert srcs["s02"] == "" and srcs["s04"] == ""  # 截断走占位
         assert fake_gen.generate.await_count == 2
 
+    def test_scene_strip_collected_and_ranked(self, outputs_tmp):
+        """scene-strip 空 src 也进生图目标；minimal 档优先级仅次于封面
+        背景图——同一批候选里四格图解挤掉普通内嵌图。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = {"version": "1.0",
+               "meta": {**SAMPLE_OUTLINE["meta"], "periods": 1},
+               "slides": [
+                   {"id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+                    "elements": [{"type": "image", "src": "", "background": True,
+                                  "caption": "月夜窗前"}]},
+                   {"id": "s02", "kind": "intro", "title": "诗人", "period": 1,
+                    "elements": [{"type": "image", "src": "",
+                                  "caption": "李白像"}]},
+                   {"id": "s03", "kind": "reading", "title": "情景画卷", "period": 1,
+                    "elements": [{"type": "scene-strip", "src": "",
+                                  "scenes": [{"caption": "床前明月光"},
+                                             {"caption": "疑是地上霜"},
+                                             {"caption": "举头望明月"},
+                                             {"caption": "低头思故乡"}]}]},
+               ],
+               "lessonPlan": {}, "handout": {"levels": []}}
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            result = asyncio.run(node({"yuwen_params": PARAMS,
+                                       "yuwen_content": doc}))
+        # periods=1 → 上限 2：背景封面(rank0) + 四格图解(rank2) 入选，
+        # 普通内嵌图 s02(rank4) 被截断走占位
+        assert result["yuwen_content"]["slides"][0]["elements"][0]["src"] \
+            == "assets/s01_0.png"
+        assert result["yuwen_content"]["slides"][2]["elements"][0]["src"] \
+            == "assets/s03_0.png"
+        assert result["yuwen_content"]["slides"][1]["elements"][0]["src"] == ""
+
+    def test_prompt_roles_background_and_scene(self, outputs_tmp):
+        """prompt 三角色：背景图=横构图压标题指引；四格=田字 2×2 依次入画。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = {"version": "1.0", "meta": SAMPLE_OUTLINE["meta"],
+               "slides": [
+                   {"id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+                    "elements": [{"type": "image", "src": "", "background": True,
+                                  "caption": "月夜窗前"}]},
+                   {"id": "s02", "kind": "reading", "title": "情景画卷", "period": 1,
+                    "elements": [{"type": "scene-strip", "src": "",
+                                  "scenes": [{"caption": "床前明月光"},
+                                             {"caption": "疑是地上霜"},
+                                             {"caption": "举头望明月"},
+                                             {"caption": "低头思故乡"}]}]},
+               ],
+               "lessonPlan": {}, "handout": {"levels": []}}
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        params = {**PARAMS, "image_count": "all"}
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            asyncio.run(node({"yuwen_params": params, "yuwen_content": doc}))
+        prompts = [c[0][0] for c in fake_gen.generate.call_args_list]
+        bg = next(p for p in prompts if "背景插画" in p)
+        assert "横幅全景构图" in bg and "压标题" in bg
+        scene = next(p for p in prompts if "四格连环画" in p)
+        assert "田字" in scene and "第1格：床前明月光" in scene
+        assert "第4格：低头思故乡" in scene and "画风四格保持一致" in scene
+
     def test_all_generates_everything(self, outputs_tmp):
         """image_count=all → 不受上限截断，全部生成。"""
         from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node

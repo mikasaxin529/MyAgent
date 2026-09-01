@@ -136,6 +136,77 @@ def inch(v):
     return T.inch(v)
 
 
+# ---- 渐变 / 全出血底图辅助（对标商业课件 2026-09 新增）----
+def _send_back(slide, sp, idx=2):
+    """把 shape 元素移到 spTree 指定位置（2=紧贴背景之后，越靠前越底层）。"""
+    sp.getparent().remove(sp)
+    slide.shapes._spTree.insert(idx, sp)
+
+
+def _set_gradient(shape, stops, angle_deg=90):
+    """给 autoshape 注入线性渐变填充（python-pptx 无原生渐变 API，手写 XML）。
+
+    stops: [(pos_pct 0..100, 'RRGGBB', alpha_pct 0..100), ...]，pos_pct 沿
+    angle 方向插值；angle_deg=90 表示自上而下。半透明遮罩靠低 alpha 实现。
+    gradFill 须落在 ln 之前（OOXML CT_ShapeProperties 顺序：geom,fill,ln,effect）。
+    """
+    spPr = shape._element.spPr
+    for tag in ('a:noFill', 'a:solidFill', 'a:gradFill',
+                'a:blipFill', 'a:pattFill', 'a:grpFill'):
+        for el in spPr.findall(qn(tag)):
+            spPr.remove(el)
+    gs = "".join(
+        f'<a:gs pos="{int(pos * 1000)}">'
+        f'<a:srgbClr val="{c}"><a:alpha val="{int(a * 1000)}"/></a:srgbClr></a:gs>'
+        for pos, c, a in stops)
+    ang = int(angle_deg * 60000) % 21600000
+    xml = (
+        '<a:gradFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'rotWithShape="1">'
+        f'<a:gsLst>{gs}</a:gsLst>'
+        f'<a:lin ang="{ang}" scaled="0"/>'
+        '</a:gradFill>')
+    grad = etree.fromstring(xml)
+    ln = spPr.find(qn('a:ln'))
+    if ln is not None:
+        ln.addprevious(grad)
+    else:
+        spPr.append(grad)
+
+
+def _mask_rect(slide, x, y, w, h, stops, angle_deg=90):
+    """半透明渐变遮罩矩形（叠加在图上保证文字可读），无边框无阴影。"""
+    shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, int(x), int(y), int(w), int(h))
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    _set_gradient(shp, stops, angle_deg)
+    return shp
+
+
+def _add_fullbleed_picture(slide, src, insert_idx=3):
+    """整页 cover-crop 铺图（13.333:7.5 居中裁切），移到背景之上、内容之下。
+
+    源图比目标更宽 → 左右各裁；更窄 → 上下各裁。返回 picture shape 或 None。
+    """
+    try:
+        from PIL import Image as PILImage
+        with PILImage.open(src) as im:
+            iw, ih = im.size
+        pic = slide.shapes.add_picture(src, 0, 0, width=T.SLIDE_W, height=T.SLIDE_H)
+        tgt = T.SLIDE_W / T.SLIDE_H
+        src_ar = iw / ih
+        if src_ar > tgt:                 # 源偏宽 → 裁左右
+            c = (1 - tgt / src_ar) / 2
+            pic.crop_left = c; pic.crop_right = c
+        elif src_ar < tgt:               # 源偏窄 → 裁上下
+            c = (1 - src_ar / tgt) / 2
+            pic.crop_top = c; pic.crop_bottom = c
+        _send_back(slide, pic._element, insert_idx)
+        return pic
+    except Exception:
+        return None
+
+
 # ---- 页眉 / 页脚 / 标签 ----
 KIND_LABEL = {
     "cover": "封面", "toc": "目录", "objectives": "学习目标", "intro": "情境导入",
@@ -144,6 +215,7 @@ KIND_LABEL = {
     "review": "复习导入", "writing": "写法总结", "extend": "拓展延伸",
     "board": "板书设计", "practice": "课堂练习", "end": "结束",
     "revision": "写字指导", "poem": "古诗", "discussion": "合作探究",
+    "challenge": "闯关练习", "scene-strip": "情景图解",
 }
 
 
@@ -154,6 +226,32 @@ def _header(slide, sj, stage):
                  sj.get("title", ""), font=fonts.HEI,
                  size=T.font_for(stage, "slide_title"),
                  color=T.PAL.TITLE_TEXT, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+
+
+def _numbered_header_on():
+    """当前主题是否启用编号章节头（layout.numbered_header，缺省 False）。"""
+    return bool(T.L.get("numbered_header", False))
+
+
+def _header_numbered(slide, sj, stage, num):
+    """编号章节头（商业课件版式）：左上大灰数字 + 栏目大标题 + 细分隔线横贯。
+
+    数字约 0.9 英寸高、DIVIDER 浅灰粗体；标题右侧避让右上角药丸标签。
+    """
+    _add_textbox(slide, inch(T.L.MARGIN_X - 0.08), inch(0.28), inch(1.55), inch(0.9),
+                 f"{num:02d}", font=fonts.HEI, size=56, color=T.PAL.DIVIDER,
+                 bold=True, anchor=MSO_ANCHOR.MIDDLE)
+    tx = inch(T.L.MARGIN_X + 1.5)
+    _add_textbox(slide, tx, inch(0.46), inch(7.6), inch(0.72),
+                 sj.get("title", ""), font=fonts.HEI,
+                 size=T.font_for(stage, "slide_title"),
+                 color=T.PAL.TITLE_TEXT, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+    # 细分隔线：从左边距横贯到右边界
+    line = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, inch(T.L.MARGIN_X), inch(1.32),
+        inch(13.333 - 2 * T.L.MARGIN_X), inch(0.017))
+    line.fill.solid(); line.fill.fore_color.rgb = _rgb(T.PAL.DIVIDER)
+    _no_border(line); line.shadow.inherit = False
 
 
 def _pill(slide, x_right, y, text, *, fill=None, color=None, size=13, bold=True,
@@ -195,16 +293,17 @@ def _header_tags(slide, sj, meta, total_periods):
               color=T.PAL.ACCENT, size=13)
 
 
-def _footer(slide, meta, page_no, total):
-    """页脚：左课程名 · 右页码，细灰。"""
+def _footer(slide, meta, page_no, total, color=None):
+    """页脚：左课程名 · 右页码，细灰。全出血封面上可传入浅色覆盖。"""
+    color = color or T.PAL.FOOT
     y = inch(7.16)
     _add_textbox(slide, inch(T.L.MARGIN_X), y, inch(6.0), inch(0.3),
                  f"{meta.get('title','')} · {meta.get('textbook','')}",
-                 font=fonts.HEI, size=11, color=T.PAL.FOOT,
+                 font=fonts.HEI, size=11, color=color,
                  anchor=MSO_ANCHOR.MIDDLE)
     _add_textbox(slide, inch(11.2), y, inch(1.6), inch(0.3),
                  f"{page_no:02d} / {total:02d}", font=fonts.HEI, size=11,
-                 color=T.PAL.FOOT, align=PP_ALIGN.RIGHT, anchor=MSO_ANCHOR.MIDDLE)
+                 color=color, align=PP_ALIGN.RIGHT, anchor=MSO_ANCHOR.MIDDLE)
 
 
 # ---- Pillow 预渲染：注音行 / 田字格 ----
@@ -371,31 +470,67 @@ def classify_slide(slide_json) -> str:
 
 
 # ---- 页面渲染 ----
+def _find_background_image(sj):
+    """扫描本页 elements，返回第一张 background:True 且 src 有效的 image 元素路径。"""
+    for el in sj.get("elements", []):
+        if (isinstance(el, dict) and el.get("type") == "image"
+                and el.get("background")):
+            src = el.get("src", "")
+            if src and Path(src).is_file():
+                return src
+    return None
+
+
 def _render_cover(slide, sj, meta, stage, page_no, total):
-    """封面：装饰圆 + 大字标题 + 短横 + 信息行。"""
+    """封面：装饰圆 + 大字标题 + 短横 + 信息行。
+
+    若本页含 background:True 的有效 image，则切换为全出血底图版式（对标
+    商业课件）：整页铺图 + 压暗渐变遮罩，标题改白色压图；无图则走原暖白版式。
+    """
+    bg_src = _find_background_image(sj)
     _bg(slide)
-    # 顶部装饰：细横条 + 三圆点
-    _accent_underline(slide, inch(5.9), inch(1.15), w=1.5, h=0.06)
-    for i, (cx, col) in enumerate([(5.55, T.PAL.ACCENT), (6.60, T.PAL.ACCENT2), (7.65, T.PAL.ACCENT3)]):
+    if bg_src:
+        if _add_fullbleed_picture(slide, bg_src) is not None:
+            # 自上而下压暗遮罩：顶部略透、底部更暗，标题在中央偏上区可读
+            _mask_rect(slide, 0, 0, T.SLIDE_W, T.SLIDE_H,
+                       [(0, "111827", 20), (55, "111827", 38), (100, "111827", 58)])
+            _render_cover_onslide(slide, sj, meta, stage, page_no, total, on_image=True)
+            return
+    _render_cover_onslide(slide, sj, meta, stage, page_no, total, on_image=False)
+
+
+def _render_cover_onslide(slide, sj, meta, stage, page_no, total, *, on_image):
+    """封面内容层。on_image=True 时文字改白色系压在全出血图上。"""
+    title_col = "FFFFFF" if on_image else T.PAL.TITLE_TEXT
+    sub_col = "E5E7EB" if on_image else T.PAL.TEXT_LIGHT
+    # 顶部装饰：细横条 + 三圆点（图上时整组转白保证可见）
+    _accent_underline(slide, inch(5.9), inch(1.15), w=1.5, h=0.06,
+                      color=("FFFFFF" if on_image else T.PAL.ACCENT))
+    dot_cols = (["FFFFFF"] * 3 if on_image
+                else [T.PAL.ACCENT, T.PAL.ACCENT2, T.PAL.ACCENT3])
+    for i, cx in enumerate([5.55, 6.60, 7.65]):
         dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, inch(cx), inch(1.5), inch(0.16), inch(0.16))
-        dot.fill.solid(); dot.fill.fore_color.rgb = _rgb(col)
+        dot.fill.solid(); dot.fill.fore_color.rgb = _rgb(dot_cols[i])
         _no_border(dot); dot.shadow.inherit = False
     title = sj.get("title") or meta["title"]
     # 标题下大短横
-    _accent_underline(slide, inch(5.42), inch(4.30), w=2.5, h=0.12)
+    _accent_underline(slide, inch(5.42), inch(4.30), w=2.5, h=0.12,
+                      color=("FFFFFF" if on_image else T.PAL.ACCENT))
     _add_textbox(slide, inch(1.2), inch(2.35), inch(10.93), inch(1.9),
                  title, font=fonts.HEI, size=T.font_for(stage, "cover_title"),
-                 color=T.PAL.TITLE_TEXT, bold=True,
+                 color=title_col, bold=True,
                  align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
     sub = f"{meta.get('textbook','')}　·　{meta.get('lessonType','')}课"
     _add_textbox(slide, inch(1.2), inch(4.62), inch(10.93), inch(0.7),
-                 sub, font=fonts.HEI, size=22, color=T.PAL.TEXT_LIGHT,
+                 sub, font=fonts.HEI, size=22, color=sub_col,
                  align=PP_ALIGN.CENTER)
     per = sj.get("period", 1)
     if meta.get("periods", 1) > 1:
         _pill(slide, inch(6.9), inch(5.5), f"第 {per} 课时",
-              fill=T.PAL.ACCENT, size=15)
-    _footer(slide, meta, page_no, total)
+              fill=("FFFFFF" if on_image else T.PAL.ACCENT),
+              color=T.PAL.TITLE_TEXT, size=15)
+    _footer(slide, meta, page_no, total,
+            color=("E5E7EB" if on_image else None))
 
 
 def _render_end(slide, sj, meta, stage, page_no, total):
@@ -414,9 +549,13 @@ def _render_end(slide, sj, meta, stage, page_no, total):
     _footer(slide, meta, page_no, total)
 
 
-def _render_content(slide, sj, meta, stage):
+def _render_content(slide, sj, meta, stage, num=0):
     _bg(slide)
-    _header(slide, sj, stage)
+    # 编号章节头是主题可选特性（mint-green 启用，其余三主题走原短横头，零回归）
+    if _numbered_header_on() and num:
+        _header_numbered(slide, sj, stage, num)
+    else:
+        _header(slide, sj, stage)
     top = inch(T.L.CONTENT_TOP)
     for i, el in enumerate(sj.get("elements", [])):
         if top > inch(T.L.MAX_Y):
@@ -519,7 +658,16 @@ def _place_element(slide, el, top, stage, idx=0) -> int:
                      font=fonts.HEI, size=13, color=T.PAL.TEXT_LIGHT)
         return top + inch(0.42) + gap
 
+    if t == "challenge":
+        return _place_challenge(slide, el, top, stage) + gap
+
+    if t == "scene-strip":
+        return _place_scene_strip(slide, el, top, stage) + gap
+
     if t == "image":
+        # 全出血背景图由页面入口（cover）处理，内嵌分支直接跳过
+        if el.get("background"):
+            return top
         w_in = 13.333 - 2 * T.L.MARGIN_X
         h_in = float(el.get("height", 1.6))
         h = inch(h_in)
@@ -556,6 +704,260 @@ def _place_element(slide, el, top, stage, idx=0) -> int:
         return top + h + gap
 
     return top + gap
+
+
+def _place_challenge(slide, el, top, stage):
+    """闯关练习卡（商业课件版式）：每关一张大圆角卡。
+
+    卡头 =「第X关 · 填一填」实心药丸徽章；卡身 question 大字居中；
+    options（若有）横排子卡，正确项 SUCCESS 边框 + 星标；hint 浅色斜体小字条收尾。
+    一页 1-2 关：两关时上下两张卡等分可用高度。
+    """
+    items = [it for it in el.get("items", []) if isinstance(it, dict)]
+    if not items:
+        return top
+    left = inch(T.L.MARGIN_X)
+    width = inch(13.333 - 2 * T.L.MARGIN_X)
+    gap = inch(0.22)
+    avail = inch(T.L.MAX_Y) - top - gap * (len(items) - 1)
+    card_h = int(min(inch(3.1), max(inch(1.7), avail / len(items))))
+    q_sz = T.font_for(stage, "h2")
+    for i, it in enumerate(items):
+        y = top + i * (card_h + gap)
+        if y + inch(0.4) > inch(T.L.MAX_Y):
+            break
+        _card_panel(slide, left, y, width, card_h)
+        # 卡头徽章：第X关 · 小标题
+        head = " · ".join(x for x in (str(it.get("stage", "")).strip(),
+                                      str(it.get("title", "")).strip()) if x)
+        head = head or f"第{'一二三四五'[i]}关"
+        bw = 0.20 + len(head) * (14 * 0.0135) + 0.16 * 2   # 与 _pill 宽度公式一致
+        _pill(slide, left + inch(0.3) + inch(bw), y + inch(0.2), head,
+              fill=T.PAL.ACCENT, color="FFFFFF", size=14, h=0.38)
+        # question 大字居中（徽章行下方）
+        qy = y + inch(0.62)
+        _add_textbox(slide, left + inch(0.3), qy, width - inch(0.6), inch(0.62),
+                     str(it.get("question", "")), font=fonts.HEI, size=q_sz,
+                     color=T.PAL.TITLE_TEXT, bold=True,
+                     align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+        # 选项横排子卡：正确答案 SUCCESS 边框 + 星标
+        options = [str(o) for o in (it.get("options") or []) if str(o).strip()][:4]
+        if options:
+            ans = str(it.get("answer", "")).strip()
+            correct = -1
+            if ans:
+                if len(ans) == 1 and ans.upper() in "ABCD" \
+                        and ord(ans.upper()) - ord("A") < len(options):
+                    correct = ord(ans.upper()) - ord("A")
+                else:
+                    correct = next((k for k, o in enumerate(options)
+                                    if o == ans or ans in o), -1)
+            oy = qy + inch(0.7)
+            oh = int(min(inch(0.95), y + card_h - oy - inch(0.15)))
+            if oh > inch(0.45):
+                n = len(options)
+                ow_in = (13.333 - 2 * T.L.MARGIN_X - 0.5 - (n - 1) * 0.22) / n
+                ox = left + inch(0.25)
+                for k, opt in enumerate(options):
+                    is_c = k == correct
+                    optw = inch(ow_in)
+                    _card_panel(slide, ox, oy, optw, oh,
+                                fill=(T.PAL.BG_CARD if not is_c else T.PAL.CARD_TINT_QUOTE),
+                                edge_color=(T.PAL.SUCCESS if is_c else T.PAL.BORDER),
+                                edge_w=(2.0 if is_c else 1.0))
+                    lbl = "ABCD"[k]
+                    _add_textbox(slide, int(ox), int(oy), int(optw), int(oh),
+                                 runs=[(f"{lbl}. ", {"size": T.font_for(stage, "body"),
+                                                     "color": (T.PAL.SUCCESS if is_c else T.PAL.TEXT_LIGHT),
+                                                     "bold": True}),
+                                       (opt, {"size": T.font_for(stage, "body"),
+                                              "color": T.PAL.TEXT})],
+                                 font=fonts.HEI, align=PP_ALIGN.CENTER,
+                                 anchor=MSO_ANCHOR.MIDDLE)
+                    if is_c:
+                        star = _add_textbox(slide, int(ox + optw - inch(0.34)),
+                                            int(oy - inch(0.06)), inch(0.3), inch(0.3),
+                                            "★", font=fonts.HEI, size=15,
+                                            color=T.PAL.SUCCESS, bold=True)
+                        star.shadow.inherit = False
+                    ox += optw + inch(0.22)
+        # hint 浅色斜体小字条
+        hint = str(it.get("hint", "")).strip()
+        if hint:
+            _add_textbox(slide, left + inch(0.3), y + card_h - inch(0.42),
+                         width - inch(0.6), inch(0.32),
+                         "💡 " + hint, font=fonts.HEI, size=13,
+                         color=T.PAL.TEXT_LIGHT, align=PP_ALIGN.CENTER,
+                         anchor=MSO_ANCHOR.MIDDLE)
+    return top + len(items) * card_h + (len(items) - 1) * gap
+
+
+def _place_scene_strip(slide, el, top, stage):
+    """四格情景图解：一张大图上部约 4.2 英寸 + 2×2 白色分格线 + 四行 caption。
+
+    生图管线产出单张田字 2×2 连环画回填 src；src 缺失时退化占位面板，
+    分格线与 caption 照常渲染，caption 圆点序号色轮换 HIGHLIGHTS。
+    """
+    left = inch(T.L.MARGIN_X)
+    width = inch(13.333 - 2 * T.L.MARGIN_X)
+    scenes = [s if isinstance(s, dict) else {"caption": str(s)}
+              for s in (el.get("scenes") or [])][:4]
+    # caption 区高：每行 0.34，图高按剩余空间自适应（上限 4.2 英寸）
+    cap_h = inch(0.34 * len(scenes) + 0.1)
+    img_h = int(min(inch(4.2), inch(T.L.MAX_Y) - top - cap_h))
+    src = el.get("src", "")
+    embedded = False
+    if src and Path(src).is_file():
+        try:
+            # cover-crop 填满预留框：等比放大后裁切，杜绝留白
+            from PIL import Image as PILImage
+            with PILImage.open(src) as im:
+                iw, ih = im.size
+            pic = slide.shapes.add_picture(src, int(left), int(top),
+                                           width=int(width), height=img_h)
+            box_ar = (width / 914400) / (img_h / 914400)
+            if iw / ih > box_ar:
+                c = (1 - box_ar / (iw / ih)) / 2
+                pic.crop_left = c; pic.crop_right = c
+            else:
+                c = (1 - (iw / ih) / box_ar) / 2
+                pic.crop_top = c; pic.crop_bottom = c
+            embedded = True
+        except Exception:
+            embedded = False
+    if not embedded:
+        _card_panel(slide, left, top, width, img_h, fill=T.PAL.CARD_TINT_IMAGE)
+        _add_textbox(slide, left, top, width, img_h,
+                     "🖼  " + (el.get("caption") or "四格情景图（待生图回填）"),
+                     font=fonts.HEI, size=14, color=T.PAL.TEXT_LIGHT,
+                     align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    # 2×2 白色细分格线（横一条 + 竖一条，压图/压占位面板皆可）
+    for (lx, ly, lw, lh) in (
+            (int(left), int(top + img_h / 2 - inch(0.014)), int(width), inch(0.028)),
+            (int(left + width / 2 - inch(0.014)), int(top), inch(0.028), img_h)):
+        ln = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, lx, ly, lw, lh)
+        ln.fill.solid(); ln.fill.fore_color.rgb = _rgb("FFFFFF")
+        ln.fill.fore_color.brightness = 0
+        _no_border(ln); ln.shadow.inherit = False
+    # 四行 caption：圆点序号 + 文字，颜色轮换 HIGHLIGHTS
+    y = top + img_h + inch(0.1)
+    for i, sc in enumerate(scenes):
+        col = T.PAL.HIGHLIGHTS[i % len(T.PAL.HIGHLIGHTS)]
+        dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, left + inch(0.08),
+                                     int(y + inch(0.11)), inch(0.14), inch(0.14))
+        dot.fill.solid(); dot.fill.fore_color.rgb = _rgb(col)
+        _no_border(dot); dot.shadow.inherit = False
+        _add_textbox(slide, left + inch(0.35), int(y), width - inch(0.4), inch(0.34),
+                     f"{i + 1}. {sc.get('caption', '')}", font=fonts.HEI,
+                     size=T.font_for(stage, "caption") + 1, color=T.PAL.TEXT,
+                     anchor=MSO_ANCHOR.MIDDLE)
+        y += inch(0.34)
+    return top + img_h + cap_h
+
+
+def _render_toc(slide, sj, meta, stage, num=0):
+    """目录页（商业课件版式）：左侧 4.4 英寸整高图栏 + 右侧两列栏目条目。
+
+    条目来自本页 list 元素（heading+list 组合也兼容）；图栏有 image src
+    就嵌图，无图用 CARD_TINT_IMAGE 色块 + 上下渐变色条装饰。
+    """
+    _bg(slide)
+    col_w = 4.4
+    src = ""
+    for el in sj.get("elements", []):
+        if el.get("type") == "image" and not el.get("background"):
+            s = el.get("src", "")
+            if s and Path(s).is_file():
+                src = s
+            break
+    # 左图栏：有图 cover-crop 整栏嵌图；无图用色块（都置于背景之上、装饰之下）
+    if src:
+        try:
+            from PIL import Image as PILImage
+            with PILImage.open(src) as im:
+                iw, ih = im.size
+            pic = slide.shapes.add_picture(src, 0, 0, width=inch(col_w), height=T.SLIDE_H)
+            box_ar = col_w / 7.5
+            if iw / ih > box_ar:
+                c = (1 - box_ar / (iw / ih)) / 2
+                pic.crop_left = c; pic.crop_right = c
+            else:
+                c = (1 - (iw / ih) / box_ar) / 2
+                pic.crop_top = c; pic.crop_bottom = c
+            _send_back(slide, pic._element, 3)
+        except Exception:
+            src = ""
+    if not src:
+        panel = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, inch(col_w), T.SLIDE_H)
+        panel.fill.solid(); panel.fill.fore_color.rgb = _rgb(T.PAL.CARD_TINT_IMAGE)
+        _no_border(panel); panel.shadow.inherit = False
+        _send_back(slide, panel._element, 3)
+    # 上下渐变色条装饰（压在图栏顶部/底部）
+    for y0, ang in ((0, 90), (T.SLIDE_H - inch(0.85), 270)):
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, int(y0),
+                                     inch(col_w), inch(0.85))
+        _no_border(bar); bar.shadow.inherit = False
+        _set_gradient(bar, [(0, T.PAL.ACCENT, 55), (100, T.PAL.ACCENT, 0)], ang)
+        _send_back(slide, bar._element, 4)
+    # 图栏上的"目录"大字（压图，白字）
+    _add_textbox(slide, inch(0.35), inch(0.5), inch(col_w - 0.7), inch(1.0),
+                 "目 录", font=fonts.HEI, size=40, color="FFFFFF", bold=True,
+                 anchor=MSO_ANCHOR.MIDDLE)
+    _add_textbox(slide, inch(0.35), inch(1.32), inch(col_w - 0.7), inch(0.4),
+                 "CONTENTS", font=fonts.MONO, size=15, color="FFFFFF",
+                 anchor=MSO_ANCHOR.MIDDLE)
+    # 右区页眉：编号章节头（主题可选）或普通头 + 右上标签 + 页脚
+    rx = inch(col_w + 0.45)
+    if _numbered_header_on() and num:
+        _add_textbox(slide, rx - inch(0.08), inch(0.28), inch(1.55), inch(0.9),
+                     f"{num:02d}", font=fonts.HEI, size=56, color=T.PAL.DIVIDER,
+                     bold=True, anchor=MSO_ANCHOR.MIDDLE)
+        _add_textbox(slide, rx + inch(1.42), inch(0.46), inch(6.0), inch(0.72),
+                     sj.get("title") or "目录", font=fonts.HEI,
+                     size=T.font_for(stage, "slide_title"),
+                     color=T.PAL.TITLE_TEXT, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+        line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, int(rx), inch(1.32),
+                                      inch(13.333 - (col_w + 0.45) - 0.55), inch(0.017))
+        line.fill.solid(); line.fill.fore_color.rgb = _rgb(T.PAL.DIVIDER)
+        _no_border(line); line.shadow.inherit = False
+    # 条目：本页第一个 list 元素的 items（heading 内容并入头部，不重复展示）
+    items = []
+    for el in sj.get("elements", []):
+        if el.get("type") == "list":
+            items = [str(x) for x in el.get("items", [])]
+            break
+    if not items:  # 兜底：heading 也算条目
+        items = [str(el.get("content", "")) for el in sj.get("elements", [])
+                 if el.get("type") == "heading" and el.get("content")]
+    # 两列网格
+    n = len(items)
+    rows = -(-n // 2)
+    top0 = inch(1.75)
+    grid_w = inch(13.333 - 0.55) - rx
+    cell_w = int((grid_w - inch(0.4)) / 2)
+    row_h = int(min(inch(1.0), max(inch(0.6), (inch(T.L.MAX_Y) - top0) / max(rows, 1))))
+    for i, item in enumerate(items):
+        r, c = divmod(i, 2)
+        cx = rx + c * (cell_w + inch(0.4))
+        cy = top0 + r * row_h
+        # 编号圆点
+        badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, int(cx), int(cy + row_h / 2 - inch(0.19)),
+                                       inch(0.38), inch(0.38))
+        badge.fill.solid(); badge.fill.fore_color.rgb = _rgb(T.PAL.ACCENT)
+        _no_border(badge); badge.shadow.inherit = False
+        _add_textbox(slide, int(cx), int(cy + row_h / 2 - inch(0.19)), inch(0.38), inch(0.38),
+                     str(i + 1).zfill(2), font=fonts.HEI, size=13,
+                     color=T.PAL.TITLE_TEXT, bold=True,
+                     align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+        _add_textbox(slide, int(cx + inch(0.55)), int(cy), int(cell_w - inch(0.6)), int(row_h),
+                     item, font=fonts.HEI, size=T.font_for(stage, "h3") + 2,
+                     color=T.PAL.TITLE_TEXT, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+        if c == 0:  # 列分隔细线
+            ln = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+                                        int(cx + cell_w + inch(0.2)), int(top0),
+                                        inch(0.014), int(row_h * rows - inch(0.1)))
+            ln.fill.solid(); ln.fill.fore_color.rgb = _rgb(T.PAL.DIVIDER)
+            _no_border(ln); ln.shadow.inherit = False
 
 
 def _place_list(slide, el, top, stage):
@@ -1042,6 +1444,7 @@ def render(doc: dict, out_path: str) -> str:
         blank = prs.slide_layouts[6]
         slides = [s for s in doc["slides"] if s.get("period", 1) == per]
         n = len(slides)
+        num = 0  # 内容页编号（cover/toc 之后从 01 起，供 mint 编号章节头用）
         for si, sj in enumerate(slides, start=1):
             slide = prs.slides.add_slide(blank)
             layout = classify_slide(sj)
@@ -1050,8 +1453,13 @@ def render(doc: dict, out_path: str) -> str:
                     _render_end(slide, sj, meta, stage, si, n)
                 else:
                     _render_cover(slide, sj, meta, stage, si, n)
+            elif sj.get("kind") == "toc":
+                _render_toc(slide, sj, meta, stage)
+                _header_tags(slide, sj, meta, total)
+                _footer(slide, meta, si, n)
             else:
-                _render_content(slide, sj, meta, stage)
+                num += 1
+                _render_content(slide, sj, meta, stage, num)
                 _header_tags(slide, sj, meta, total)
                 _footer(slide, meta, si, n)
         fp = main_path if pi == 0 else str(out_path.with_suffix(f".p{per}.pptx"))
