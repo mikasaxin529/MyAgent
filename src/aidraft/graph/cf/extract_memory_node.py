@@ -1,7 +1,7 @@
 """ExtractMemory 节点：从对话抽事实存长期记忆（对齐 ChatFlow extract_memory）。
 
 LLM 抽取值得长期记住的用户事实/偏好（姓名、约束、偏好）。持久化到
-.devpilot/store.db 的 facts 表（SQLite，见 web/store.py）——重启可读回、
+.aidraft/store.db 的 facts 表（SQLite，见 web/store.py）——重启可读回、
 可被 system prompt 注入回模型。旧 facts.jsonl 兼容：存在则一次性导入后改名。
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from ...gateway import ChatMessage
 from ..state import AgentGraphState
 from .base import done, emit, visit
 
-_MEM_DIR = Path(".devpilot/memory")
+_MEM_DIR = Path(".aidraft/memory")
 _FACTS_FILE = _MEM_DIR / "facts.jsonl"
 
 

@@ -4,10 +4,10 @@
 # 用 tar over ssh，Git Bash / WSL / macOS / Linux 通用，无需 rsync。
 #
 # 用法：
-#   ./sync.sh root@<ECS_IP> /opt/devpilot
-#   ./sync.sh root@<ECS_IP> /opt/devpilot -i ~/.ssh/your_key.pem
+#   ./sync.sh root@<ECS_IP> /opt/aidraft
+#   ./sync.sh root@<ECS_IP> /opt/aidraft -i ~/.ssh/your_key.pem
 #
-# 传完后在服务器上：ssh root@<ECS_IP> 'cd /opt/devpilot && ./deploy.sh --no-pull'
+# 传完后在服务器上：ssh root@<ECS_IP> 'cd /opt/aidraft && ./deploy.sh --no-pull'
 # ============================================================================
 set -euo pipefail
 
@@ -33,7 +33,7 @@ INCLUDE=(Dockerfile docker-compose.yml deploy.sh sync.sh build-push-acr.sh
 
 echo "→ 打包工作区：$SRC"
 # --exclude 前端 node_modules/dist 与所有 __pycache__/.venv；.env 单独传（不进镜像）
-tar czf /tmp/devpilot-sync.tgz \
+tar czf /tmp/aidraft-sync.tgz \
   --exclude='node_modules' --exclude='dist' --exclude='__pycache__' \
   --exclude='.venv' --exclude='*.pyc' --exclude='.git' \
   --exclude='outputs' --exclude='logs' --exclude='*.tsbuildinfo' \
@@ -43,7 +43,7 @@ echo "→ 准备远程目录 $DEST"
 ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p '$DEST'"
 
 echo "→ 上传代码包"
-scp "${SSH_OPTS[@]}" /tmp/devpilot-sync.tgz "$HOST:$DEST/devpilot-sync.tgz"
+scp "${SSH_OPTS[@]}" /tmp/aidraft-sync.tgz "$HOST:$DEST/aidraft-sync.tgz"
 
 # .env（含 API Key）：存在才传，且传上去设为 600
 if [[ -f .env ]]; then
@@ -53,8 +53,8 @@ if [[ -f .env ]]; then
 fi
 
 echo "→ 远程解包"
-ssh "${SSH_OPTS[@]}" "$HOST" "cd '$DEST' && tar xzf devpilot-sync.tgz && rm devpilot-sync.tgz && chmod +x deploy.sh sync.sh build-push-acr.sh 2>/dev/null; true"
+ssh "${SSH_OPTS[@]}" "$HOST" "cd '$DEST' && tar xzf aidraft-sync.tgz && rm aidraft-sync.tgz && chmod +x deploy.sh sync.sh build-push-acr.sh 2>/dev/null; true"
 
-rm -f /tmp/devpilot-sync.tgz
+rm -f /tmp/aidraft-sync.tgz
 echo "✓ 已同步到 $HOST:$DEST"
 echo "下一步：ssh $HOST 'cd $DEST && ./deploy.sh --no-pull'"

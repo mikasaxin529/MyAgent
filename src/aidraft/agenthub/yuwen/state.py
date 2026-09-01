@@ -61,12 +61,12 @@ class YuwenState(TypedDict, total=False):
 _THIS_DIR = Path(__file__).resolve().parent
 _SCRIPTS_DIR = _THIS_DIR / "scripts"
 _REFERENCES_DIR = _THIS_DIR / "references"
-_PROJECT_ROOT = _THIS_DIR.parents[3]  # yuwen → agenthub → devpilot → src → 项目根
-# 课件交付物落盘根目录。优先 DEVPILOT_OUTPUTS_DIR（Docker 里 pip install
+_PROJECT_ROOT = _THIS_DIR.parents[3]  # yuwen → agenthub → aidraft → src → 项目根
+# 课件交付物落盘根目录。优先 AIDRAFT_OUTPUTS_DIR（Docker 里 pip install
 # 非 editable 安装时 __file__ 位于 site-packages，parents[3] 推断出
 # /usr/local/lib/python3.13 这类只读假项目根，mkdir 直接 PermissionError；
-# 与 web/api.py 的 DEVPILOT_DIST_DIR 同一套约定，compose 挂载 ./outputs）。
-_OUTPUTS_DIR = Path(os.environ.get("DEVPILOT_OUTPUTS_DIR")
+# 与 web/api.py 的 AIDRAFT_DIST_DIR 同一套约定，compose 挂载 ./outputs）。
+_OUTPUTS_DIR = Path(os.environ.get("AIDRAFT_OUTPUTS_DIR")
                     or _PROJECT_ROOT / "outputs")
 
 

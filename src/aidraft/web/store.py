@@ -27,12 +27,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-# 数据库位置：优先 DEVPILOT_DATA_DIR（Docker 里 pip 非 editable 安装时
+# 数据库位置：优先 AIDRAFT_DATA_DIR（Docker 里 pip 非 editable 安装时
 # __file__ 在 site-packages，仓库相对路径推断会指向只读区），
-# 否则项目根/.devpilot/store.db（.devpilot 已 gitignore，含对话内容不入库）。
-_DB_PATH = (Path(os.environ.get("DEVPILOT_DATA_DIR", ""))
-            if os.environ.get("DEVPILOT_DATA_DIR")
-            else Path(__file__).resolve().parents[3] / ".devpilot") / "store.db"
+# 否则项目根/.aidraft/store.db（.aidraft 已 gitignore，含对话内容不入库）。
+_DB_PATH = (Path(os.environ.get("AIDRAFT_DATA_DIR", ""))
+            if os.environ.get("AIDRAFT_DATA_DIR")
+            else Path(__file__).resolve().parents[3] / ".aidraft") / "store.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (

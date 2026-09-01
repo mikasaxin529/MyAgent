@@ -93,7 +93,7 @@ def _parse_sse(text: str) -> list[dict]:
 
 
 def _chat_response(content: str, finish_reason: str = "stop"):
-    from devpilot.gateway import ChatResponse
+    from aidraft.gateway import ChatResponse
     return ChatResponse(content=content, provider="test", model="test",
                         latency_ms=100, finish_reason=finish_reason)
 
@@ -120,7 +120,7 @@ async def _page_stream(msgs, **kwargs):
     user = msgs[1].content
     i = user.find('"id": "s0')
     idx = int(user[i + 9]) if i >= 0 else 1
-    from devpilot.gateway import ChatChunk
+    from aidraft.gateway import ChatChunk
     yield ChatChunk(delta=json.dumps(_page_json(idx), ensure_ascii=False))
     yield ChatChunk(done=True)
 
@@ -136,13 +136,13 @@ def client(tmp_path, monkeypatch):
     注意 patch 的是 state._OUTPUTS_DIR 模块属性（节点运行时查找），
     api.py 的 OUTPUTS_DIR 只在 /files 下载路径展示用，测试不断言其内容。
     """
-    from devpilot.agenthub.yuwen import state as yuwen_state
-    from devpilot.web.api import app
+    from aidraft.agenthub.yuwen import state as yuwen_state
+    from aidraft.web.api import app
     from fastapi.testclient import TestClient
 
     monkeypatch.setattr(yuwen_state, "_OUTPUTS_DIR", tmp_path)
 
-    with patch("devpilot.gateway.build_default_gateway") as mock_build:
+    with patch("aidraft.gateway.build_default_gateway") as mock_build:
         mock_gw = MagicMock()
         mock_gw.chat.side_effect = _make_chat_dispatch()
 
@@ -163,7 +163,7 @@ def _seed_outline_on_disk(tmp_path, confirmed: bool):
     派生的目录名与后续 fixture 用例里真实 extract 出的 params 一致，
     confirm/gen_slides/render 都定位到同一会话。
     """
-    from devpilot.agenthub.yuwen import state as yuwen_state
+    from aidraft.agenthub.yuwen import state as yuwen_state
     params = {"title": "静夜思", "grade": 1, "lesson_type": "古诗词",
               "textbook": "部编版一年级下册"}
     yuwen_state._save_state(params,
@@ -271,7 +271,7 @@ class TestYuwenEndpoints:
         fake_result.returncode = 0
         fake_result.stdout = "ok"
         fake_result.stderr = ""
-        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
+        with patch("aidraft.agenthub.yuwen.nodes.render.subprocess.run",
                    return_value=fake_result):
             resp = c.post("/api/chat", json={
                 "prompt": "确认", "agent": "yuwen"})
@@ -356,7 +356,7 @@ class TestYuwenEndpoints:
         session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "静夜思.pptx").write_text("fake")
         fake_result = MagicMock(returncode=0, stdout="ok", stderr="")
-        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
+        with patch("aidraft.agenthub.yuwen.nodes.render.subprocess.run",
                    return_value=fake_result):
             resp = c.post("/api/chat", json={
                 "prompt": "确认大纲，开始生成", "agent": "yuwen"})

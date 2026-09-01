@@ -75,7 +75,7 @@ def _discover() -> dict[str, AgentManifest]:
             continue
         try:
             mod = importlib.import_module(
-                f"devpilot.agenthub.{entry.name}.manifest"
+                f"aidraft.agenthub.{entry.name}.manifest"
             )
         except Exception:  # noqa: BLE001 - 单个包失败降级跳过
             logger.warning("agenthub: manifest import 失败，跳过 %s", entry.name, exc_info=True)
@@ -91,7 +91,7 @@ def _discover() -> dict[str, AgentManifest]:
         )
         try:
             graph_mod = importlib.import_module(
-                f"devpilot.agenthub.{entry.name}.graph"
+                f"aidraft.agenthub.{entry.name}.graph"
             )
             m.graph_fn = getattr(graph_mod, "build_graph", None)
         except Exception:  # noqa: BLE001 - graph 缺失降级（agent 仍可列出，执行时报错）

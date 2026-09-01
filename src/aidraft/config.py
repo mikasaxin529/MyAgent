@@ -1,4 +1,4 @@
-"""DevPilot 全局配置。
+"""智绘工坊 AIDraft 全局配置。
 
 从环境变量 / .env 加载，集中管理模型网关与各模块可调参数。
 后续模块（RAG/MCP/Eval）的配置也统一挂在这里，避免散落。
@@ -31,9 +31,9 @@ class ProviderConfig:
 
 @dataclass
 class GatewayConfig:
-    primary: str = field(default_factory=lambda: _env("DEVILOT_PRIMARY_MODEL", "deepseek"))
-    fallback: str = field(default_factory=lambda: _env("DEVILOT_FALLBACK_MODEL", "qwen"))
-    rpm_limit: int = field(default_factory=lambda: int(_env("DEVILOT_RPM_LIMIT", "60") or "60"))
+    primary: str = field(default_factory=lambda: _env("AIDRAFT_PRIMARY_MODEL", "deepseek"))
+    fallback: str = field(default_factory=lambda: _env("AIDRAFT_FALLBACK_MODEL", "qwen"))
+    rpm_limit: int = field(default_factory=lambda: int(_env("AIDRAFT_RPM_LIMIT", "60") or "60"))
 
 
 @dataclass
@@ -97,8 +97,8 @@ _DEFAULT_AGENT_MODELS: dict[str, str] = {
 
 
 def _agents_yaml_path() -> str:
-    """定位 config/agents.yaml：本文件在 src/devpilot/config.py，
-    项目根 = parents[2]（devpilot → src → 项目根）。"""
+    """定位 config/agents.yaml：本文件在 src/aidraft/config.py，
+    项目根 = parents[2]（aidraft → src → 项目根）。"""
     import os
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(os.path.dirname(here))  # 项目根

@@ -54,7 +54,7 @@ export default function AgentMenu({ agents, currentId, onSelect, open, onClose }
           lineHeight: 1.5,
         }}
       >
-        新智能体放入 src/devpilot/agenthub/ 目录后自动发现
+        新智能体放入 src/aidraft/agenthub/ 目录后自动发现
       </div>
     </div>
   );

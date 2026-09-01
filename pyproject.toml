@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "devpilot"
+name = "aidraft"
 version = "0.1.0"
-description = "软件研发全流程 AI Agent 平台"
+description = "智绘工坊 AIDraft —— 多智能体内容创作平台"
 requires-python = ">=3.10"
 readme = "README.md"
 dependencies = [
@@ -41,7 +41,7 @@ rag = [
 # web extras：启用 HTTP API + WebSocket 服务（前端对接）。
 # - fastapi：REST/WS API 框架。
 # - uvicorn：ASGI 服务器。
-# 缺失时不影响 CLI 使用；安装后用 `uvicorn devpilot.web.api:app` 启动。
+# 缺失时不影响 CLI 使用；安装后用 `uvicorn aidraft.web.api:app` 启动。
 web = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
@@ -67,7 +67,7 @@ dev = [
 ]
 
 [project.scripts]
-devpilot = "devpilot.app:main"
+aidraft = "aidraft.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -78,7 +78,7 @@ where = ["src"]
 # assets（HTML 模板/CSS/JS，render_html 运行时读）同理——Docker 里 pip
 # 非 editable 安装，缺了课件 agent 直接不可用。
 [tool.setuptools.package-data]
-devpilot = [
+aidraft = [
     "prompts/nodes/*.md",
     "agenthub/yuwen/references/*.md",
     "agenthub/yuwen/references/examples/*.json",

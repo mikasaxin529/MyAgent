@@ -1,7 +1,7 @@
 """CompressMemory 节点：会话滚动摘要存中期记忆（对齐 ChatFlow compress_memory）。
 
 会话超过阈值轮时，把窗口外的早期消息 LLM 压缩成一段摘要，存
-.devpilot/store.db 的 summaries 表（session_id + 覆盖到的消息上界 seq）。
+.aidraft/store.db 的 summaries 表（session_id + 覆盖到的消息上界 seq）。
 供下次重建上下文时前置摘要 + 最近原文（对应 runtime/memory.py 三段式）。
 短会话不触发——消息本体已由前端整段落进 messages 表。
 """
@@ -14,7 +14,7 @@ from ...gateway import ChatMessage
 from ..state import AgentGraphState
 from .base import done, emit, visit
 
-_MEM_DIR = Path(".devpilot/memory")
+_MEM_DIR = Path(".aidraft/memory")
 _CONV_FILE = _MEM_DIR / "last_conv.jsonl"
 
 # 触发摘要压缩的最小消息数（含 system；低阈值没必要压缩）。

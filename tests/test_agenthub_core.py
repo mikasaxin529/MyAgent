@@ -37,7 +37,7 @@ class TestRegistry:
 
     def test_list_agents_contains_general(self):
         """list_agents() 必须包含 general 智能体。"""
-        from devpilot.agenthub import list_agents, reset_cache
+        from aidraft.agenthub import list_agents, reset_cache
 
         reset_cache()
         agents = list_agents()
@@ -46,7 +46,7 @@ class TestRegistry:
 
     def test_general_manifest_fields(self):
         """general 智能体的 manifest 字段必须完整。"""
-        from devpilot.agenthub import get_agent, reset_cache
+        from aidraft.agenthub import get_agent, reset_cache
 
         reset_cache()
         agent = get_agent("general")
@@ -60,14 +60,14 @@ class TestRegistry:
 
     def test_get_agent_unknown_returns_none(self):
         """get_agent 对未知 id 返回 None。"""
-        from devpilot.agenthub import get_agent, reset_cache
+        from aidraft.agenthub import get_agent, reset_cache
 
         reset_cache()
         assert get_agent("nonexistent_agent") is None
 
     def test_agent_to_dict_format(self):
         """to_dict() 返回的字段名与契约一致（id/display_name/description/identity_color/placeholder）。"""
-        from devpilot.agenthub import get_agent, reset_cache
+        from aidraft.agenthub import get_agent, reset_cache
 
         reset_cache()
         agent = get_agent("general")
@@ -81,7 +81,7 @@ class TestRegistry:
 
     def test_discover_skips_underscore_dirs(self):
         """_discover 跳过以 _ 开头的目录。"""
-        from devpilot.agenthub import _discover, reset_cache
+        from aidraft.agenthub import _discover, reset_cache
 
         reset_cache()
         agents = _discover()
@@ -91,11 +91,11 @@ class TestRegistry:
 
     def test_missing_manifest_skips_gracefully(self):
         """缺少 manifest.py 的目录被跳过，不抛异常。"""
-        from devpilot.agenthub import _discover, reset_cache
+        from aidraft.agenthub import _discover, reset_cache
 
         reset_cache()
         # 创建一个临时目录模拟缺 manifest
-        hub = Path(__file__).resolve().parents[1] / "src" / "devpilot" / "agenthub"
+        hub = Path(__file__).resolve().parents[1] / "src" / "aidraft" / "agenthub"
         tmp_dir = hub / "_tmp_no_manifest"
         try:
             tmp_dir.mkdir(exist_ok=True)
@@ -112,7 +112,7 @@ class TestRegistry:
 
     def test_general_build_graph_invocation(self):
         """general.graph.build_graph 返回可调用的图对象（带 compile）。"""
-        from devpilot.agenthub.general.graph import build_graph
+        from aidraft.agenthub.general.graph import build_graph
 
         # 构造 mock 依赖
         mock_gw = MagicMock()
@@ -140,15 +140,15 @@ class TestRegistry:
 def client():
     """返回 mock 网关后的 TestClient，避免真实 LLM 调用。
 
-    注意：SSE 端点与 build_chat_graph_runtime 都从 devpilot.gateway 导入
-    build_default_gateway，因此必须 patch 源模块（devpilot.gateway）而非
+    注意：SSE 端点与 build_chat_graph_runtime 都从 aidraft.gateway 导入
+    build_default_gateway，因此必须 patch 源模块（aidraft.gateway）而非
     web.api 的名字引用。
     """
-    from devpilot.web.api import app
+    from aidraft.web.api import app
     from fastapi.testclient import TestClient
 
     # 打 patch 阻止 build_default_gateway 真实调用（覆盖所有 import 站点）
-    with patch("devpilot.gateway.build_default_gateway") as mock_build:
+    with patch("aidraft.gateway.build_default_gateway") as mock_build:
         mock_gw = MagicMock()
         # chat 返回空响应
         mock_gw.chat.return_value = MagicMock(
@@ -312,7 +312,7 @@ class TestFilesEndpoint:
     @pytest.fixture(autouse=True)
     def setup_outputs(self):
         """创建临时 outputs 目录用于测试文件服务。"""
-        from devpilot.web.api import OUTPUTS_DIR
+        from aidraft.web.api import OUTPUTS_DIR
 
         self._test_dir = OUTPUTS_DIR / "test_agent" / "test_session"
         self._test_dir.mkdir(parents=True, exist_ok=True)

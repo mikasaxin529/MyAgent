@@ -107,7 +107,7 @@ def system_prompt_with_date() -> str:
     """
     today = _date.today().strftime("%Y年%m月%d日")
     return (
-        f"你是 DevPilot 的助手。今天是 {today}。"
+        f"你是智绘工坊的助手。今天是 {today}。"
         "用户询问“最新/近期/本月/上个月/最近”等相对时间时，以今天为基准计算。"
         "联网搜索结果中出现的日期都是真实检索日期，近期日期（今年或去年的）"
         "均为有效信息，严禁以“未来日期”为由剔除搜索结果。\n"
@@ -127,7 +127,7 @@ def system_prompt_with_date() -> str:
 
 
 # SYSTEM_CHAT 原文（ensure_date_system 判断“首条是否纯占位”用）。
-SYSTEM_CHAT_PLAIN = "你是 DevPilot 的助手，简洁专业地回答用户。"
+SYSTEM_CHAT_PLAIN = "你是智绘工坊的助手，简洁专业地回答用户。"
 
 
 def ensure_date_system(msgs):

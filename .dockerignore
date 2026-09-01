@@ -7,7 +7,7 @@
 .git
 .venv
 .pytest_cache
-.devpilot
+.aidraft
 data/
 outputs/
 tmp_*.py

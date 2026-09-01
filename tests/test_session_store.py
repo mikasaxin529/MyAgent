@@ -24,10 +24,10 @@ sys.path.insert(0, str(_SRC))
 
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
-    """每个测试一个独立临时库（避免共享 .devpilot/store.db）。"""
-    monkeypatch.setattr("devpilot.web.store._conn", None)
-    monkeypatch.setattr("devpilot.web.store._DB_PATH", tmp_path / "store.db")
-    from devpilot.web import store as s
+    """每个测试一个独立临时库（避免共享 .aidraft/store.db）。"""
+    monkeypatch.setattr("aidraft.web.store._conn", None)
+    monkeypatch.setattr("aidraft.web.store._DB_PATH", tmp_path / "store.db")
+    from aidraft.web import store as s
     yield s
     if s._conn is not None:
         s._conn.close()
@@ -147,7 +147,7 @@ class TestSessionAPI:
     @pytest.fixture()
     def client(self, store, monkeypatch):
         from fastapi.testclient import TestClient
-        from devpilot.web import api as api_mod
+        from aidraft.web import api as api_mod
         monkeypatch.setattr(api_mod, "OUTPUTS_DIR", _PROJECT_ROOT / "outputs")
         return TestClient(api_mod.app)
 

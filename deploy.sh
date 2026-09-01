@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # ============================================================================
-# DevPilot 持续部署脚本（Docker，阿里云 ECS + Caddy HTTPS）
+# 智绘工坊 AIDraft 持续部署脚本（Docker，阿里云 ECS + Caddy HTTPS）
 #
 # 用法：
 #   ./deploy.sh              # 构建并滚动重启（服务器上执行）
 #   ./deploy.sh --no-pull    # 不 git pull，用当前目录代码构建
-#   ./deploy.sh --local      # 用现成镜像启动（IMAGE=xxx/devpilot:tag 指定）
+#   ./deploy.sh --local      # 用现成镜像启动（IMAGE=xxx/aidraft:tag 指定）
 #   ./deploy.sh logs         # 跟踪应用日志
 #   ./deploy.sh status       # 容器 + 域名健康总览
 #
 # 架构：
 #   [用户] → https://duoduo-qi.cn (443, Caddy 自动证书)
-#          → reverse_proxy → 127.0.0.1:8000 (docker, DevPilot)
+#          → reverse_proxy → 127.0.0.1:8000 (docker, AIDraft)
 #   8000 端口同时直接暴露（安全组已放行），可 IP 直连调试。
 # ============================================================================
 set -euo pipefail
@@ -49,7 +49,7 @@ case "${1:-deploy}" in
   restart) ensure_dirs; $COMPOSE restart; health_check ;;
   --local)
     ensure_dirs
-    IMAGE="${IMAGE:-devpilot:latest}" $COMPOSE up -d --no-build
+    IMAGE="${IMAGE:-aidraft:latest}" $COMPOSE up -d --no-build
     health_check
     ;;
   *)

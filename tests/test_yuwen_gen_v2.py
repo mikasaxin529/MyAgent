@@ -22,7 +22,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _SRC = _PROJECT_ROOT / "src"
 sys.path.insert(0, str(_SRC))
 
-YUWEN = _SRC / "devpilot" / "agenthub" / "yuwen"
+YUWEN = _SRC / "aidraft" / "agenthub" / "yuwen"
 REFS = YUWEN / "references"
 JINGYESI = REFS / "examples" / "jingyesi.json"
 
@@ -84,7 +84,7 @@ class TestOutlinePrompt:
 
     @pytest.fixture
     def formatted(self):
-        from devpilot.agenthub.yuwen.prompts import (
+        from aidraft.agenthub.yuwen.prompts import (
             META_CONTRACT, SYSTEM_GEN_OUTLINE, _read_ref)
         return SYSTEM_GEN_OUTLINE.format(
             stages=_read_ref("stages.md"),
@@ -119,7 +119,7 @@ class TestSlidePrompt:
 
     @pytest.fixture
     def formatted(self):
-        from devpilot.agenthub.yuwen.prompts import SYSTEM_GEN_SLIDE, _read_ref
+        from aidraft.agenthub.yuwen.prompts import SYSTEM_GEN_SLIDE, _read_ref
         return SYSTEM_GEN_SLIDE.format(
             stages=_read_ref("stages.md"),
             schema=_read_ref("schema.md"),
@@ -213,7 +213,7 @@ class TestStructureReport:
         return {"meta": {"stage": stage, "periods": periods}, "slides": slides}
 
     def test_toc_page_not_empty_warning(self):
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         toc = {"id": "s02", "kind": "toc", "title": "目录", "period": 1,
                "elements": [{"type": "image", "src": "", "caption": "配图"},
                             {"type": "list", "items": ["导入", "识字"]}]}
@@ -223,7 +223,7 @@ class TestStructureReport:
         assert "s02(toc,2元素)" in report
 
     def test_challenge_single_element_no_density_warning(self):
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         ch = {"id": "s12", "kind": "challenge", "title": "闯关", "period": 1,
               "elements": [{"type": "challenge", "items": [
                   {"stage": "第一关", "title": "填一填", "question": "床前明月□"}]}]}
@@ -233,7 +233,7 @@ class TestStructureReport:
 
     def test_normal_page_still_warns(self):
         """普通页元素超限仍要告警（豁免只针对版式栏目 kind）。"""
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         elems = [{"type": "paragraph", "content": f"句{i}"} for i in range(6)]
         page = {"id": "s03", "kind": "analysis", "title": "品析",
                 "period": 1, "elements": elems}
@@ -242,14 +242,14 @@ class TestStructureReport:
 
     def test_empty_page_still_warns_even_formatted(self):
         """版式栏目 kind 但 elements 为空 → 仍按空元素页告警。"""
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         page = {"id": "s02", "kind": "toc", "title": "目录", "period": 1,
                 "elements": []}
         report = _structure_report(self._doc([page]))
         assert "空元素页" in report
 
     def test_page_target_line_and_overage_warning(self):
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         slides = [{"id": f"s{i:02d}", "kind": "content", "title": "t",
                    "period": 1,
                    "elements": [{"type": "heading", "content": "x", "size": "h1"}]}
@@ -259,7 +259,7 @@ class TestStructureReport:
         assert "明显超每课时 10-14 页指引" in report
 
     def test_within_target_no_overage_warning(self):
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         slides = [{"id": f"s{i:02d}", "kind": "content", "title": "t",
                    "period": 1,
                    "elements": [{"type": "heading", "content": "x", "size": "h1"}]}
@@ -269,7 +269,7 @@ class TestStructureReport:
 
     def test_jingyesi_example_report_clean(self):
         """真实示例整课跑预检：无密度告警、无空页、三种版式栏目页被标注。"""
-        from devpilot.agenthub.yuwen.nodes.review import _structure_report
+        from aidraft.agenthub.yuwen.nodes.review import _structure_report
         doc = json.loads(JINGYESI.read_text(encoding="utf-8"))
         report = _structure_report(doc)
         assert "超密度上限" not in report

@@ -1,24 +1,23 @@
-"""DevPilot HTTP API + WebSocket 服务。
+"""智绘工坊 AIDraft HTTP API 服务。
 
-把现有 CLI 能力暴露为 REST + WS，供前端对接。本层只做"协议适配"：
-不重复实现业务逻辑，全部复用 gateway / SkillRegistry / Orchestrator /
-run_evaluation。CLI 与 API 行为一致，单一事实源在 web.runtime.build_runtime。
+把平台能力暴露为 REST 供前端对接。本层只做"协议适配"：不重复实现业务
+逻辑，智能体图由 AgentHub 注册中心发现（agenthub/），Skill 由 web.runtime
+的 build_registry 装配。
 
 启动：
     pip install -e ".[web]"
-    uvicorn devpilot.web.api:app --reload      # 开发：API 在 8000
+    uvicorn aidraft.web.api:app --reload      # 开发：API 在 8000
     # 前端开发服务器（web/frontend）：npm run dev  # 5173，proxy 到 8000
 
 端点契约（前后端共同遵守）：
 REST:
     GET  /api/health  → {providers, primary, fallback, chain}
-    POST /api/chat    body {prompt} → {content, provider, model, latency_ms, ...}
-    GET  /api/skills  → [{name, specs:[{name, description, schema}]}, ...]
-    POST /api/eval    → Metrics.to_dict() + per_tag
-WS:
-    /ws/run  客户端先发 {"task":"..."}；服务端流式推送 audit / blackboard /
-             approval_request 帧；遇审批需客户端回 {"decision","comment","args"}；
-             最终发 {"type":"done", blackboard, summary}。
+    GET  /api/agents  → {agents:[{agent_id, display_name, ...}]}
+    GET  /api/sessions[?agent=]  /api/sessions/{sid}  PUT/DELETE 同路径
+    GET  /api/memory/facts → {facts:[...]}
+    POST /api/chat    body {prompt, history?, agent?, session_id?}
+                      → SSE 流（token/step/outline/review/.../done 帧）
+    GET  /files/{agent}/{session}/{path} → 交付物静态文件（防目录穿越）
 """
 from __future__ import annotations
 
@@ -27,15 +26,13 @@ import asyncio
 import json
 import mimetypes
 import os
-import queue as _queue
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 # 惰性引入 FastAPI：未安装 [web] 时，import 本模块给清晰提示而非裸 ImportError。
 try:
-    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, Request
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     from starlette.responses import FileResponse, JSONResponse, StreamingResponse
@@ -44,27 +41,13 @@ except ImportError as exc:  # pragma: no cover - 仅缺依赖时触发
         "Web 层依赖未安装，请运行：pip install -e \".[web]\""
     ) from exc
 
-from ..gateway import build_default_gateway, ChatMessage
-from ..governance.approval import ApprovalResult
-from ..governance.audit import AuditEntry
-from .events import ObservableAuditLog
-from .approval_web import WebApprovalGate
-from .runtime import build_runtime, build_registry
-
-
-# ----------------------------------------------------------------------
-# 请求/响应模型（Pydantic）
-# ----------------------------------------------------------------------
-class ChatRequest(BaseModel):
-    prompt: str
-    history: list[dict] = []
-    agent: str = "general"
+from ..gateway import build_default_gateway
 
 
 # ----------------------------------------------------------------------
 # FastAPI 应用
 # ----------------------------------------------------------------------
-app = FastAPI(title="DevPilot API", version="0.1.0")
+app = FastAPI(title="智绘工坊 AIDraft API", version="0.1.0")
 
 # CORS：开发期前端跑在 5173，允许跨域。生产同源可关。
 app.add_middleware(
@@ -75,26 +58,11 @@ app.add_middleware(
 )
 
 
-# 交付物落盘根目录（契约 3.4）：src/devpilot/web/api.py -> parents[3] = 项目根
-# 优先 DEVPILOT_OUTPUTS_DIR（Docker 非 editable 安装时 parents[3] 指向
-# site-packages 只读目录，与 DEVPILOT_DIST_DIR 同一套容器约定）。
-OUTPUTS_DIR = Path(os.environ.get("DEVPILOT_OUTPUTS_DIR")
+# 交付物落盘根目录（契约 3.4）：src/aidraft/web/api.py -> parents[3] = 项目根
+# 优先 AIDRAFT_OUTPUTS_DIR（Docker 非 editable 安装时 parents[3] 指向
+# site-packages 只读目录，与 AIDRAFT_DIST_DIR 同一套容器约定）。
+OUTPUTS_DIR = Path(os.environ.get("AIDRAFT_OUTPUTS_DIR")
                    or Path(__file__).resolve().parents[3] / "outputs")
-
-
-def _eval_path(rel: str) -> str:
-    """定位项目根下的资源文件（如 eval_data/golden.jsonl）。
-
-    本文件在 src/devpilot/web/api.py，项目根 = parents[3]。
-    """
-    here = Path(__file__).resolve()
-    root = here.parents[3]  # web/api.py -> devpilot -> src -> 项目根
-    return str(root / rel)
-
-
-def _entry_dict(e: AuditEntry) -> dict:
-    """审计条目转可序列化 dict。"""
-    return asdict(e)
 
 
 # ----------------------------------------------------------------------
@@ -182,78 +150,6 @@ async def memory_facts(limit: int = 30) -> dict:
 
 
 # ----------------------------------------------------------------------
-# REST：单轮对话
-# ----------------------------------------------------------------------
-@app.post("/api/chat/legacy")
-async def chat(req: ChatRequest) -> dict:
-    """单轮对话（REST，非流式）：经网关调一轮 LLM，返回正文与 meta。
-
-    注：流式聊天走 POST /api/chat（SSE）。本端点保留供 CLI/eval 单轮直调。"""
-    gw = build_default_gateway()
-    resp = gw.chat(
-        [
-            ChatMessage("system", "你是 DevPilot 的助手，简洁专业地回答。"),
-            ChatMessage("user", req.prompt),
-        ]
-    )
-    return {
-        "content": resp.content,
-        "provider": resp.provider,
-        "model": resp.model,
-        "latency_ms": resp.latency_ms,
-        "prompt_tokens": resp.prompt_tokens,
-        "completion_tokens": resp.completion_tokens,
-    }
-
-
-# ----------------------------------------------------------------------
-# REST：Skill 生态
-# ----------------------------------------------------------------------
-@app.get("/api/skills")
-async def skills() -> list[dict]:
-    """列出已注册 Skill 及其能力清单（按 Skill 分组）。"""
-    registry = build_registry()
-    result: list[dict] = []
-    for name in registry.list_skills():
-        skill = registry.get(name)
-        specs = [
-            {"name": s.name, "description": s.description, "schema": s.schema}
-            for s in skill.specs()
-        ]
-        result.append({"name": name, "specs": specs})
-    return result
-
-
-# ----------------------------------------------------------------------
-# REST：评估体系
-# ----------------------------------------------------------------------
-@app.post("/api/eval")
-async def eval_run() -> dict:
-    """跑 Evaluation Harness，返回多维度指标。
-
-    复用 CLI cmd_eval 的逻辑：加载 golden.jsonl → LLMJudge → stub
-    agent_run_fn → run_evaluation。真实场景 agent_run_fn 应跑 Orchestrator。
-    """
-    from ..eval.dataset import GoldenSet
-    from ..eval.judge import LLMJudge
-    from ..eval.metrics import run_evaluation
-    import time
-
-    golden_set = GoldenSet()
-    golden_set.load_jsonl(_eval_path("eval_data/golden.jsonl"))
-    gw = build_default_gateway()
-    judge = LLMJudge(gw)
-
-    # stub 被测 Agent：签名 callable(task)->(output, latency_ms, tokens)。
-    def agent_run_fn(task: str):
-        t0 = time.time()
-        output = gw.chat_text(task, system="你是研发助手，针对需求给出简短的改动方案。")
-        return output, (time.time() - t0) * 1000.0, 0
-
-    metrics = run_evaluation(golden_set, judge, agent_run_fn)
-    return metrics.to_dict()
-
-
 # SSE：ChatFlow 式流式聊天（POST /api/chat → text/event-stream）
 # ----------------------------------------------------------------------
 def _sse(obj: dict) -> str:
@@ -480,132 +376,6 @@ async def chat_sse(request: Request) -> StreamingResponse:
 
 
 # ----------------------------------------------------------------------
-# WebSocket：实时 Multi-Agent 流程
-# ----------------------------------------------------------------------
-@app.websocket("/ws/run")
-async def ws_run(websocket: WebSocket) -> None:
-    """实时跑 Orchestrator 并流式推送事件。
-
-    帧协议见模块 docstring。核心设计：
-      - Orchestrator 跑在后台线程（run_in_executor），不阻塞事件循环；
-      - ObservableAuditLog 把每条 audit 事件投递到 event_q（线程安全队列），
-        主循环 drain 后 send 给前端；
-      - Orchestrator.emitter 把每个 worker 后的 Blackboard 快照投递到 event_q；
-      - WebApprovalGate 把审批请求投递到 req_q，主循环取到后推前端弹框，
-        前端回填 decision 后放 res_q，gate 解阻塞继续。
-    """
-    await websocket.accept()
-    try:
-        # 1) 等客户端发 task
-        raw = await websocket.receive_text()
-        task = json.loads(raw).get("task", "")
-        if not task:
-            await websocket.send_json({"type": "error", "message": "empty task"})
-            return
-
-        # 2) 装配可观测审计 + Web 审批门
-        event_q: "_queue.Queue[dict]" = _queue.Queue()  # 待推送帧
-        req_q: "_queue.Queue" = _queue.Queue()          # 审批请求
-        res_q: "_queue.Queue" = _queue.Queue()          # 审批裁决
-
-        audit = ObservableAuditLog()
-        # 订阅者：把 audit 事件包装成帧投递 event_q（在 Worker 线程被调用，queue 线程安全）。
-        audit.subscribe(lambda e: event_q.put({"type": "audit", "entry": _entry_dict(e)}))
-
-        approval = WebApprovalGate(req_q, res_q)
-
-        # 3) 装配 Orchestrator（注入可观测审计 + Web 审批门）
-        gw, registry, _, _, orch = build_runtime(audit=audit, approval=approval)
-        # 注入 Blackboard 快照回调：每个 worker 后推送黑板状态。
-        orch.emitter = lambda bb: event_q.put({"type": "blackboard", "data": bb})
-
-        # 4) 后台线程跑 orchestrator.run（阻塞调用，必须脱离事件循环）
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(None, orch.run, task)
-
-        # 5) 主循环：drain 事件 + 处理审批，直到 Orchestrator 完成
-        while True:
-            done = future.done()
-
-            # 5.1 先把已产生的事件全部推出去（非阻塞 drain）
-            drained = False
-            while True:
-                try:
-                    frame = event_q.get_nowait()
-                except _queue.Empty:
-                    break
-                drained = True
-                await websocket.send_json(frame)
-
-            # 5.2 检查是否有审批请求需要前端裁决
-            try:
-                req = req_q.get_nowait()
-            except _queue.Empty:
-                req = None
-
-            if req is not None:
-                # 推审批请求给前端
-                await websocket.send_json({
-                    "type": "approval_request",
-                    "action": req.action,
-                    "args": req.args,
-                    "reason": req.reason,
-                })
-                # 阻塞等前端回填 decision（此时 Worker 线程正阻塞在 res_q.get）
-                try:
-                    dec_raw = await websocket.receive_text()
-                except WebSocketDisconnect:
-                    # 客户端断连：放一个拒绝解阻塞 Worker，安全退出
-                    res_q.put(ApprovalResult(approved=False, comment="客户端断连"))
-                    raise
-                dec = json.loads(dec_raw)
-                decision = dec.get("decision")
-                comment = dec.get("comment", "")
-                if decision == "approve":
-                    res_q.put(ApprovalResult(approved=True, comment=comment))
-                elif decision == "edit":
-                    res_q.put(ApprovalResult(
-                        approved=True, comment=comment,
-                        modified_args=dec.get("args"),
-                    ))
-                else:  # reject 或未知
-                    res_q.put(ApprovalResult(approved=False, comment=comment or "人工拒绝"))
-
-            # 5.3 完成 且 本轮无新事件无审批 → 收尾
-            if done and not drained and req is None:
-                break
-            # 否则小憩继续轮询（审批期间 Worker 在跑，会持续产事件）
-            await asyncio.sleep(0.05)
-
-        # 6) 取结果（异常会在此抛出）
-        try:
-            bb = await asyncio.wrap_future(future)
-        except Exception as exc:  # noqa: BLE001
-            await websocket.send_json({"type": "error", "message": repr(exc)})
-            return
-
-        # 7) 发终帧 done（完整黑板 + 审计摘要）
-        # artifacts 里可能含 ApprovalResult（dataclass）——asdict 已递归转 dict。
-        await websocket.send_json({
-            "type": "done",
-            "blackboard": asdict(bb),
-            "summary": {
-                "total_events": len(audit.entries()),
-                "by_event": audit.to_summary(),
-            },
-        })
-
-    except WebSocketDisconnect:
-        # 客户端正常/异常断连：静默退出，不记为服务端错误。
-        return
-    except Exception as exc:  # noqa: BLE001 - 兜底，避免 WS 处理器抛未捕获异常
-        try:
-            await websocket.send_json({"type": "error", "message": repr(exc)})
-        except Exception:  # noqa: BLE001
-            pass
-
-
-# ----------------------------------------------------------------------
 # 文件服务：交付物静态文件下载（防目录穿越）
 # 必须在 SPA 兜底路由之前注册，防止 /files/... 被 {full_path:path} 捕获。
 # ----------------------------------------------------------------------
@@ -646,13 +416,13 @@ async def serve_file(agent_id: str, session: str, filename: str, inline: int = 0
 
 # ----------------------------------------------------------------------
 # 可选：托管前端构建产物（生产单命令部署）
-# 设计：API 路由与 /ws 已在上方注册（优先匹配）；此处只兜底静态资源与
+# 设计：API 路由已在上方注册（优先匹配）；此处只兜底静态资源与
 # SPA 客户端路由。/assets/* 走 StaticFiles（JS/CSS chunk），其余未匹配路径
-# 回退 index.html，让 react-router 在客户端解析 /run、/eval 等深链。
+# 回退 index.html，交 react-router 客户端解析。
 # ----------------------------------------------------------------------
-# 优先取 DEVPILOT_DIST_DIR 环境变量（Docker 里 pip install 非 editable 安装时，
+# 优先取 AIDRAFT_DIST_DIR 环境变量（Docker 里 pip install 非 editable 安装时，
 # __file__ 位于 site-packages，仓库相对路径推断会指向不存在的位置）。
-_dist = Path(os.environ.get("DEVPILOT_DIST_DIR")
+_dist = Path(os.environ.get("AIDRAFT_DIST_DIR")
              or Path(__file__).resolve().parents[3] / "web" / "frontend" / "dist")
 if _dist.is_dir():
     from fastapi.responses import FileResponse
@@ -664,6 +434,6 @@ if _dist.is_dir():
 
     @app.get("/{full_path:path}")
     async def _spa(full_path: str) -> Any:
-        """SPA 兜底：未匹配 API/WS/assets 的路径一律回 index.html，交客户端路由。"""
+        """SPA 兜底：未匹配 API/assets 的路径一律回 index.html，交客户端路由。"""
         return FileResponse(str(_index))
 

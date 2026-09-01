@@ -53,10 +53,10 @@ def _doc(n_slides: int = 3) -> dict:
 def outputs_tmp(tmp_path, monkeypatch):
     """state._OUTPUTS_DIR 隔离到 tmp + 清空 DASHSCOPE env（防本机 .env 泄漏）。
 
-    注意用 setenv("") 而非 delenv：节点 import 链会经 devpilot.config 触发
+    注意用 setenv("") 而非 delenv：节点 import 链会经 aidraft.config 触发
     load_dotenv()，不存在的键会从 .env 复活；置空串则 dotenv 不覆盖。
     """
-    from devpilot.agenthub.yuwen import state as st
+    from aidraft.agenthub.yuwen import state as st
     monkeypatch.setattr(st, "_OUTPUTS_DIR", tmp_path)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "")
     monkeypatch.delenv("DASHSCOPE_VL_MODEL", raising=False)
@@ -66,7 +66,7 @@ def outputs_tmp(tmp_path, monkeypatch):
 
 
 def _run(state: dict) -> tuple[dict, list]:
-    from devpilot.agenthub.yuwen.nodes.visual_review import _make_visual_review_node
+    from aidraft.agenthub.yuwen.nodes.visual_review import _make_visual_review_node
     frames: list = []
     node = _make_visual_review_node(lambda f: frames.append(f))
     result = asyncio.run(node(state))
@@ -93,7 +93,7 @@ def _seed_session(tmp_path, n_pdf_pages: int = 3) -> Path:
     绕开 soffice 子进程（soffice 转换本身由真机手工验收覆盖）。
     """
     import pymupdf as fitz
-    from devpilot.agenthub.yuwen import state as st
+    from aidraft.agenthub.yuwen import state as st
     session_dir = st._session_dir(PARAMS)
     (session_dir / "review").mkdir(parents=True, exist_ok=True)
     (session_dir / "静夜思.pptx").write_bytes(b"fake-pptx-bytes")
@@ -128,7 +128,7 @@ class TestVisualDegraded:
     def test_no_soffice(self, outputs_tmp, monkeypatch):
         monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
         _seed_session(outputs_tmp)
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.shutil.which",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.shutil.which",
                    return_value=None):
             result, frames = _run({"yuwen_params": PARAMS,
                                    "yuwen_content": _doc()})
@@ -147,9 +147,9 @@ class TestVisualDegraded:
     def test_convert_failure(self, outputs_tmp, monkeypatch):
         monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
         _seed_session(outputs_tmp)
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.shutil.which",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.shutil.which",
                    return_value="soffice"), \
-             patch("devpilot.agenthub.yuwen.nodes.visual_review._convert_pptx_to_pdf",
+             patch("aidraft.agenthub.yuwen.nodes.visual_review._convert_pptx_to_pdf",
                    return_value=None):
             result, _ = _run({"yuwen_params": PARAMS, "yuwen_content": _doc()})
         assert result["yuwen_visual"]["available"] is False
@@ -159,11 +159,11 @@ class TestVisualDegraded:
         monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
         pdf = _seed_session(outputs_tmp, n_pdf_pages=2)
         cls, _ = _fake_vlm(["彻底不是 JSON"] * 2)
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.shutil.which",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.shutil.which",
                    return_value="soffice"), \
-             patch("devpilot.agenthub.yuwen.nodes.visual_review._convert_pptx_to_pdf",
+             patch("aidraft.agenthub.yuwen.nodes.visual_review._convert_pptx_to_pdf",
                    return_value=pdf), \
-             patch("devpilot.agenthub.yuwen.vlm.VLMReview", cls):
+             patch("aidraft.agenthub.yuwen.vlm.VLMReview", cls):
             result, frames = _run({"yuwen_params": PARAMS,
                                    "yuwen_content": _doc(2)})
         assert result["yuwen_visual"]["available"] is False
@@ -181,11 +181,11 @@ class TestVisualHappyPath:
         monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
         pdf = _seed_session(outputs_tmp, n_pdf_pages=len(payloads))
         cls, inst = _fake_vlm(payloads)
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.shutil.which",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.shutil.which",
                    return_value="soffice"), \
-             patch("devpilot.agenthub.yuwen.nodes.visual_review._convert_pptx_to_pdf",
+             patch("aidraft.agenthub.yuwen.nodes.visual_review._convert_pptx_to_pdf",
                    return_value=pdf), \
-             patch("devpilot.agenthub.yuwen.vlm.VLMReview", cls):
+             patch("aidraft.agenthub.yuwen.vlm.VLMReview", cls):
             result, frames = _run({"yuwen_params": PARAMS,
                                    "yuwen_content": _doc(len(payloads))})
         return result, frames, inst
@@ -254,11 +254,11 @@ class TestVisualHappyPath:
 
 class TestSampling:
     def test_under_limit_all_pages(self):
-        from devpilot.agenthub.yuwen.nodes.visual_review import _sample_page_indices
+        from aidraft.agenthub.yuwen.nodes.visual_review import _sample_page_indices
         assert _sample_page_indices(3, 8) == [0, 1, 2]
 
     def test_over_limit_deterministic(self):
-        from devpilot.agenthub.yuwen.nodes.visual_review import _sample_page_indices
+        from aidraft.agenthub.yuwen.nodes.visual_review import _sample_page_indices
         a, b = _sample_page_indices(12, 8), _sample_page_indices(12, 8)
         assert a == b, "固定种子抽查必须可重现"
         assert len(a) == 8
@@ -266,7 +266,7 @@ class TestSampling:
 
     def test_env_limit_override(self, outputs_tmp, monkeypatch):
         monkeypatch.setenv("DASHSCOPE_VL_MAX_PAGES", "3")
-        from devpilot.agenthub.yuwen.nodes.visual_review import _max_pages
+        from aidraft.agenthub.yuwen.nodes.visual_review import _max_pages
         assert _max_pages() == 3
         monkeypatch.setenv("DASHSCOPE_VL_MAX_PAGES", "abc")
         assert _max_pages() == 8
@@ -280,7 +280,7 @@ class TestSofficeConversion:
     """不真调 soffice：断言命令行形状（profile 隔离 / headless / outdir）。"""
 
     def test_command_shape_and_pdf_found(self, tmp_path):
-        from devpilot.agenthub.yuwen.nodes.visual_review import _convert_pptx_to_pdf
+        from aidraft.agenthub.yuwen.nodes.visual_review import _convert_pptx_to_pdf
         pptx = tmp_path / "静夜思.pptx"
         pptx.write_bytes(b"x")
         review_dir = tmp_path / "review"
@@ -295,7 +295,7 @@ class TestSofficeConversion:
             (review_dir / "静夜思.pdf").write_bytes(b"%PDF")
             return MagicMock(returncode=0)
 
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.subprocess.run",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.subprocess.run",
                    side_effect=fake_run):
             got = _convert_pptx_to_pdf("soffice", pptx, review_dir)
         assert got == review_dir / "静夜思.pdf"
@@ -310,22 +310,22 @@ class TestSofficeConversion:
 
     def test_timeout_returns_none(self, tmp_path):
         import subprocess as sp
-        from devpilot.agenthub.yuwen.nodes.visual_review import _convert_pptx_to_pdf
+        from aidraft.agenthub.yuwen.nodes.visual_review import _convert_pptx_to_pdf
         pptx = tmp_path / "a.pptx"
         pptx.write_bytes(b"x")
         review_dir = tmp_path / "review"
         review_dir.mkdir()
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.subprocess.run",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.subprocess.run",
                    side_effect=sp.TimeoutExpired(cmd="soffice", timeout=90)):
             assert _convert_pptx_to_pdf("soffice", pptx, review_dir) is None
 
     def test_no_pdf_output_returns_none(self, tmp_path):
-        from devpilot.agenthub.yuwen.nodes.visual_review import _convert_pptx_to_pdf
+        from aidraft.agenthub.yuwen.nodes.visual_review import _convert_pptx_to_pdf
         pptx = tmp_path / "a.pptx"
         pptx.write_bytes(b"x")
         review_dir = tmp_path / "review"
         review_dir.mkdir()
-        with patch("devpilot.agenthub.yuwen.nodes.visual_review.subprocess.run",
+        with patch("aidraft.agenthub.yuwen.nodes.visual_review.subprocess.run",
                    return_value=MagicMock(returncode=0)):
             assert _convert_pptx_to_pdf("soffice", pptx, review_dir) is None
 
@@ -336,7 +336,7 @@ class TestSofficeConversion:
 
 class TestGraphWiring:
     def test_node_registered_and_edges(self):
-        from devpilot.agenthub.yuwen.graph import build_graph
+        from aidraft.agenthub.yuwen.graph import build_graph
         graph = build_graph(gateway=MagicMock(), registry=MagicMock())
         assert "visual_review" in graph.nodes
         edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -351,7 +351,7 @@ class TestGraphWiring:
 
 class TestVLMClient:
     def test_unavailable_without_env(self, monkeypatch):
-        from devpilot.agenthub.yuwen import vlm as v
+        from aidraft.agenthub.yuwen import vlm as v
         # 置空串防 load_dotenv 从 .env 复活真 key / 真 base
         monkeypatch.setenv("DASHSCOPE_API_KEY", "")
         monkeypatch.setenv("DASHSCOPE_IMAGE_BASE", "")
@@ -364,7 +364,7 @@ class TestVLMClient:
 
     def test_review_page_sends_data_uri(self, monkeypatch):
         """消息结构：image_url data URI + text，走 chat.completions。"""
-        from devpilot.agenthub.yuwen import vlm as v
+        from aidraft.agenthub.yuwen import vlm as v
         monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
         monkeypatch.setenv("DASHSCOPE_VL_MODEL", "qwen-vl-max")
         # base 由 DASHSCOPE_IMAGE_BASE 覆盖（与生图共用同一 env）
@@ -401,7 +401,7 @@ class TestVLMClient:
         assert content[1] == {"type": "text", "text": "检查这一页"}
 
     def test_empty_response_raises(self, monkeypatch):
-        from devpilot.agenthub.yuwen import vlm as v
+        from aidraft.agenthub.yuwen import vlm as v
         monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
 
         class _Completions:
@@ -428,7 +428,7 @@ class TestVLMClient:
 
 class TestVisualNote:
     def test_note_states(self):
-        from devpilot.agenthub.yuwen.nodes.report import _visual_note
+        from aidraft.agenthub.yuwen.nodes.report import _visual_note
         assert _visual_note({}) == ""
         assert _visual_note({"yuwen_visual": {
             "available": False, "reason": "未配置 DASHSCOPE_API_KEY",
@@ -449,7 +449,7 @@ class TestReportWithVisual:
     """report 的 done answer 拼入视觉摘要（真实 report 节点级验证）。"""
 
     def _report(self, state):
-        from devpilot.agenthub.yuwen.nodes.report import _make_report_node
+        from aidraft.agenthub.yuwen.nodes.report import _make_report_node
         frames: list = []
         result = asyncio.run(
             _make_report_node(lambda f: frames.append(f))(state))
@@ -510,7 +510,7 @@ def _resp(page: dict):
 
 
 def _run_fix(state: dict, gateway: MagicMock) -> tuple[dict, list]:
-    from devpilot.agenthub.yuwen.nodes.visual_fix import _make_visual_fix_node
+    from aidraft.agenthub.yuwen.nodes.visual_fix import _make_visual_fix_node
     frames: list = []
     node = _make_visual_fix_node(gateway, lambda f: frames.append(f))
     result = asyncio.run(node(state))
@@ -519,7 +519,7 @@ def _run_fix(state: dict, gateway: MagicMock) -> tuple[dict, list]:
 
 def _tmp_doc(tmp_path) -> dict:
     """读回 tmp_content.json（visual_fix 回写的盘上 doc）。"""
-    from devpilot.agenthub.yuwen import state as st
+    from aidraft.agenthub.yuwen import state as st
     p = st._content_path(PARAMS)
     return json.loads(p.read_text(encoding="utf-8"))
 
@@ -528,7 +528,7 @@ class TestRouteAfterVisual:
     """闭环总闸路由：放行条件与进入修复条件。"""
 
     def _route(self, state):
-        from devpilot.agenthub.yuwen.graph import _route_after_visual
+        from aidraft.agenthub.yuwen.graph import _route_after_visual
         return _route_after_visual(state)
 
     def test_unavailable_to_report(self):
@@ -572,7 +572,7 @@ class TestRouteAfterVisual:
                             "yuwen_visual_fix_pending": True}) == "visual_fix"
 
     def test_route_after_fix(self):
-        from devpilot.agenthub.yuwen.graph import _route_after_fix
+        from aidraft.agenthub.yuwen.graph import _route_after_fix
         assert _route_after_fix({"yuwen_visual_fix_pending": True}) == "render"
         assert _route_after_fix({"yuwen_visual_fix_rollback": True}) == "render"
         assert _route_after_fix({}) == "report"
@@ -736,7 +736,7 @@ class TestVisualFixWiring:
     """图接线：visual_review/visual_fix 条件边展开后目标齐全。"""
 
     def test_nodes_and_edges(self):
-        from devpilot.agenthub.yuwen.graph import build_graph
+        from aidraft.agenthub.yuwen.graph import build_graph
         graph = build_graph(gateway=MagicMock(), registry=MagicMock())
         assert "visual_fix" in graph.nodes
         edges = {(e.source, e.target) for e in graph.get_graph().edges}
@@ -748,7 +748,7 @@ class TestVisualFixWiring:
 
     def test_report_includes_fix_note(self, outputs_tmp):
         """report 汇总拼入修复结论（回滚场景全貌可见）。"""
-        from devpilot.agenthub.yuwen.nodes.report import _make_report_node
+        from aidraft.agenthub.yuwen.nodes.report import _make_report_node
         frames: list = []
         state = {"yuwen_params": PARAMS,
                  "yuwen_files": [{"name": "a.pptx", "path": "/files/x",

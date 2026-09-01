@@ -26,7 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _SRC = _PROJECT_ROOT / "src"
 sys.path.insert(0, str(_SRC))
 
-YUWEN = _SRC / "devpilot" / "agenthub" / "yuwen"
+YUWEN = _SRC / "aidraft" / "agenthub" / "yuwen"
 SCRIPTS = YUWEN / "scripts"
 JINGYESI = YUWEN / "references" / "examples" / "jingyesi.json"
 
@@ -181,11 +181,11 @@ class TestDefaultRegression:
     def test_default_render_identical_to_head(self, tmp_path):
         """金标准：与 git HEAD 代码对同一输入渲染的 pptx 内部条目完全一致。"""
         old = _head_tree(tmp_path)
-        old_js = old / "src/devpilot/agenthub/yuwen/references/examples/jingyesi.json"
+        old_js = old / "src/aidraft/agenthub/yuwen/references/examples/jingyesi.json"
         out_new = tmp_path / "new"; out_old = tmp_path / "old"
         assert _render_all(JINGYESI, out_new).returncode == 0
         rr = subprocess.run(
-            [sys.executable, str(old / "src/devpilot/agenthub/yuwen/scripts/render_all.py"),
+            [sys.executable, str(old / "src/aidraft/agenthub/yuwen/scripts/render_all.py"),
              str(old_js), "--out", str(out_old)],
             capture_output=True, text=True, encoding="utf-8")
         assert rr.returncode == 0, rr.stderr
@@ -229,7 +229,7 @@ class TestDefaultRegression:
 def _head_tree(tmp: Path) -> Path:
     """把 git HEAD 的 yuwen 目录解压到 tmp。"""
     import io, tarfile
-    r = subprocess.run(["git", "archive", "HEAD", "src/devpilot/agenthub/yuwen"],
+    r = subprocess.run(["git", "archive", "HEAD", "src/aidraft/agenthub/yuwen"],
                        capture_output=True, cwd=_PROJECT_ROOT)
     assert r.returncode == 0
     dest = tmp / "head_tree"; dest.mkdir()

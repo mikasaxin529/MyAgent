@@ -27,7 +27,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _SRC = _PROJECT_ROOT / "src"
 sys.path.insert(0, str(_SRC))
 
-YUWEN = _SRC / "devpilot" / "agenthub" / "yuwen"
+YUWEN = _SRC / "aidraft" / "agenthub" / "yuwen"
 SCRIPTS = YUWEN / "scripts"
 JINGYESI = YUWEN / "references" / "examples" / "jingyesi.json"
 
@@ -159,13 +159,13 @@ class TestMintTheme:
              "slides": [{"id": "s1", "elements": []}]}
         assert normalize(d)["meta"]["theme"] == "mint-green"
         sys.path.insert(0, str(_SRC))
-        from devpilot.agenthub.yuwen.nodes._page import THEMES
+        from aidraft.agenthub.yuwen.nodes._page import THEMES
         assert "mint-green" in THEMES
-        from devpilot.agenthub.yuwen.nodes.confirm import _THEME_MAP
+        from aidraft.agenthub.yuwen.nodes.confirm import _THEME_MAP
         # "青绿" 不被 warm-green 误捕：映射顺序即优先级
         pairs = dict((k, t) for kws, t in _THEME_MAP for k in kws)
         assert pairs["青绿"] == "mint-green"
-        from devpilot.agenthub.yuwen import prompts
+        from aidraft.agenthub.yuwen import prompts
         for const in (prompts.SYSTEM_GEN_OUTLINE, prompts.META_CONTRACT,
                       prompts.SYSTEM_EDIT_OUTLINE):
             assert "mint-green" in const
@@ -273,19 +273,19 @@ class TestLegacyPathZeroRegression:
     工作区新 JSON，#23 追加示例页后预期红）：这里锁的是渲染器本身。"""
 
     def test_legacy_json_pptx_identical(self, tmp_path):
-        r = subprocess.run(["git", "archive", "HEAD", "src/devpilot/agenthub/yuwen"],
+        r = subprocess.run(["git", "archive", "HEAD", "src/aidraft/agenthub/yuwen"],
                            capture_output=True, cwd=_PROJECT_ROOT)
         assert r.returncode == 0
         head = tmp_path / "head"; head.mkdir()
         with tarfile.open(fileobj=io.BytesIO(r.stdout)) as t:
             t.extractall(head)
-        old_js = (head / "src/devpilot/agenthub/yuwen"
+        old_js = (head / "src/aidraft/agenthub/yuwen"
                   / "references/examples/jingyesi.json")
         out_new = tmp_path / "new"; out_old = tmp_path / "old"
         assert _render_all(old_js, out_new).returncode == 0
         rr = subprocess.run(
             [sys.executable,
-             str(head / "src/devpilot/agenthub/yuwen/scripts/render_all.py"),
+             str(head / "src/aidraft/agenthub/yuwen/scripts/render_all.py"),
              str(old_js), "--out", str(out_old)],
             capture_output=True, text=True, encoding="utf-8")
         assert rr.returncode == 0, rr.stderr

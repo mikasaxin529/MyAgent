@@ -37,7 +37,7 @@ NODE_REVIEWER = "reviewer"
 NODE_TESTER = "tester"
 
 # 对话历史 system 文案（ws_chat 装配 messages 时首条 + chat_node 降级用）。
-SYSTEM_CHAT = "你是 DevPilot 的助手，简洁专业地回答用户。"
+SYSTEM_CHAT = "你是智绘工坊的助手，简洁专业地回答用户。"
 
 
 def _history_messages(state) -> list:
@@ -486,7 +486,7 @@ def make_tester_node(gateway, registry, audit, emitter=None):
             return {"test_result": test_result, "nodes_visited": visited}
 
         import os
-        job = os.getenv("DEVPILOT_CI_JOB", "devpilot-demo")
+        job = os.getenv("AIDRAFT_CI_JOB", "devpilot-demo")
         try:
             if audit is not None:
                 audit.record("tool_call", "tester", {"tool": "cicd.trigger_pipeline", "job": job}, trace_id=str(trace_id))

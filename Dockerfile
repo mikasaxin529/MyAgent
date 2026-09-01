@@ -16,9 +16,9 @@ FROM python:3.13-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TZ=Asia/Shanghai \
-    DEVPILOT_DIST_DIR=/app/dist \
-    DEVPILOT_OUTPUTS_DIR=/app/outputs \
-    DEVPILOT_DATA_DIR=/app/.devpilot
+    AIDRAFT_DIST_DIR=/app/dist \
+    AIDRAFT_OUTPUTS_DIR=/app/outputs \
+    AIDRAFT_DATA_DIR=/app/.aidraft
 
 WORKDIR /app
 
@@ -35,22 +35,22 @@ COPY src/ ./src/
 RUN pip install --upgrade pip \
     && pip install ".[web,graph]"
 
-# 前端构建产物。api.py 优先读 DEVPILOT_DIST_DIR（非 editable 安装时
+# 前端构建产物。api.py 优先读 AIDRAFT_DIST_DIR（非 editable 安装时
 # __file__ 在 site-packages，仓库相对路径推断会失效）
 COPY --from=webbuild /web/dist ./dist
 # agent→model 绑定等资源配置
 COPY config/ ./config/
 
-# 非 root 运行；outputs 为课件交付物落盘目录，.devpilot 为会话/记忆 SQLite
+# 非 root 运行；outputs 为课件交付物落盘目录，.aidraft 为会话/记忆 SQLite
 # 落盘目录（两者均由 compose 挂载持久化）
-RUN useradd -m devpilot \
-    && mkdir -p /app/outputs /app/.devpilot \
-    && chown -R devpilot:devpilot /app
-USER devpilot
+RUN useradd -m aidraft \
+    && mkdir -p /app/outputs /app/.aidraft \
+    && chown -R aidraft:aidraft /app
+USER aidraft
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=4)"
 
-CMD ["uvicorn", "devpilot.web.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "aidraft.web.api:app", "--host", "0.0.0.0", "--port", "8000"]

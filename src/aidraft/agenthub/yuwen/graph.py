@@ -98,7 +98,7 @@ from .state import (
 def _model_kwargs_for(agent_key: str) -> dict:
     """从 agents.yaml 取该节点绑定的 provider/model。
 
-    复用 devpilot.config.load_agent_models（与 general 图同一 loader，
+    复用 aidraft.config.load_agent_models（与 general 图同一 loader，
     yaml 缺失/解析失败优雅降级）。绑定为空串或解析不出 provider → 返回
     {}（不传参走网关默认主备链）。
     """
