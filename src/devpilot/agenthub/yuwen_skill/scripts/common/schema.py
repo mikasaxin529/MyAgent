@@ -123,9 +123,33 @@ def normalize(doc: dict) -> dict:
         if "totalPeriods" in slide:
             slide.pop("totalPeriods")
 
+        # elements 缺失/非数组 → 尽力重建：
+        # - dict（单元素对象）→ 包成数组
+        # - 字符串 → 单 paragraph
+        # - 缺失但 slide 顶层有散字段（content/text/title）→ 用它们拼一个
+        # - 其余（None/数字等）→ 空数组（validate 允许空页）
         elems = slide.get("elements")
-        if not isinstance(elems, list):
-            continue
+        if isinstance(elems, dict):
+            elems = [elems]
+        elif isinstance(elems, str) and elems.strip():
+            elems = [{"type": "paragraph", "content": elems}]
+        elif not isinstance(elems, list):
+            fallback = []
+            for src in ("content", "text", "body"):
+                v = slide.pop(src, None)
+                if isinstance(v, str) and v.strip():
+                    fallback.append({"type": "paragraph", "content": v})
+                elif isinstance(v, list):
+                    fallback.extend(
+                        {"type": "paragraph", "content": x}
+                        for x in v if isinstance(x, str))
+                elif isinstance(v, dict) and v:
+                    fallback.append(v)
+            title = slide.get("title")
+            if fallback and title:
+                fallback.insert(0, {"type": "heading", "content": title, "size": "h1"})
+            elems = fallback
+        slide["elements"] = elems
         merged_word_cards: list | None = None
         for el in elems:
             if not isinstance(el, dict):

@@ -846,6 +846,37 @@ class TestSchema:
         # handout.content → levels
         assert [l["level"] for l in doc["handout"]["levels"]] == ["我会读", "我会背"]
 
+    def test_normalize_elements_not_array(self):
+        """elements 缺失/非数组形态归一化（线上第二次失败案例）。
+
+        模型输出 elements 为 dict/字符串/缺失（内容散在顶层 content/text）。
+        """
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        meta = {"title": "静夜思", "grade": 2, "lessonType": "古诗词"}
+        cases = [
+            # dict → 包数组
+            ({"id": 1, "title": "封面", "elements": {"type": "text", "content": "静夜思"}},
+             ["paragraph"]),
+            # 字符串 → 单 paragraph
+            ({"id": 2, "title": "页", "elements": "床前明月光，疑是地上霜。"},
+             ["paragraph"]),
+            # 缺失 + 顶层 content 列表 → heading + paragraphs
+            ({"id": 3, "title": "学习目标", "content": ["认读18个生字", "正确朗读古诗"]},
+             ["heading", "paragraph", "paragraph"]),
+            # 缺失 + 顶层 text → heading + paragraph
+            ({"id": 4, "title": "小结", "text": "同学们再见"},
+             ["heading", "paragraph"]),
+            # None → 空数组（空页合法）
+            ({"id": 5, "title": "空页", "elements": None},
+             []),
+        ]
+        for slide, want_types in cases:
+            doc = normalize({"meta": meta, "slides": [dict(slide)]})
+            validate(doc)  # 不抛
+            got = [el["type"] for el in doc["slides"][0]["elements"]]
+            assert got == want_types, f"{slide.get('id')}: {got} != {want_types}"
+
     def test_normalize_leaves_valid_doc_untouched(self):
         """已合规文档 normalize 后不变（幂等且不误伤）。"""
         from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
