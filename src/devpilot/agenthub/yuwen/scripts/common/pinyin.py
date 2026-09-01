@@ -55,14 +55,18 @@ def split_syllables(text: str, pinyin: str):
 
 
 def tone_color(tone: int) -> str:
-    """声调 → 颜色 hex（无 #）。需与 design_tokens.PAL.TONE 一致。"""
-    return {
-        1: "D9534F",  # 一声红
-        2: "E8A33C",  # 二声橙
-        3: "5BA88A",  # 三声绿
-        4: "5B8AB5",  # 四声蓝
-        0: "9AA0A6",  # 轻声灰
-    }.get(tone, "3D2B1F")
+    """声调 → 颜色 hex（无 #）。唯一真相是主题 pal.TONE（design_tokens 代理）。
+
+    主题未加载或缺键时回退原暖色板值，保证独立可用。
+    """
+    from . import design_tokens as T
+    try:
+        return T.PAL["TONE"].get(tone, T.PAL["TITLE_TEXT"])
+    except KeyError:
+        return _TONE_FALLBACK.get(tone, "3D2B1F")
+
+
+_TONE_FALLBACK = {1: "D9534F", 2: "E8A33C", 3: "5BA88A", 4: "5B8AB5", 0: "9AA0A6"}
 
 
 def html_ruby(text: str, pinyin: str, colorize: bool = True) -> str:

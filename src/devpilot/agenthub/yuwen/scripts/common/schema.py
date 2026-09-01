@@ -56,6 +56,9 @@ DEFAULT_PERIODS = {
     "口语交际习作": 1,
 }
 
+# 主题包名（common/themes/*.json）；未知值 normalize 时归一 default
+LESSON_THEMES = {"default", "fresh-blue", "warm-green"}
+
 REQUIRED_META = ("title", "grade", "lessonType")
 
 
@@ -220,6 +223,18 @@ def normalize(doc: dict) -> dict:
     # ---- meta 值域归一化（grade/lessonType/objectives）----
     meta = doc.get("meta")
     if isinstance(meta, dict):
+        # meta.theme 宽松归一：缺失补 default；大小写/连字符漂移
+        # （Fresh_Blue/FRESHBLUE…）尽量救回；救不回 → default。
+        # 任何非法值都不阻断渲染，只静默降级为默认暖色主题。
+        t = meta.get("theme")
+        if isinstance(t, str) and t.strip():
+            key = t.strip().lower().replace("_", "-")
+            if key not in LESSON_THEMES:
+                # 去连字符再匹配一次（freshblue → fresh-blue）
+                key = next((x for x in LESSON_THEMES if x.replace("-", "") == key.replace("-", "")), "default")
+            meta["theme"] = key
+        else:
+            meta["theme"] = "default"
         g = _normalize_grade_value(meta.get("grade"))
         if isinstance(g, int):
             meta["grade"] = g

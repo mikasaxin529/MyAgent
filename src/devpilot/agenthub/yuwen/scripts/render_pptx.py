@@ -253,7 +253,7 @@ def _render_tianzi_png(char, stage, tone_color=None):
     grid = "#" + T.PAL.ACCENT
     m = 10
     # 外框
-    draw.rectangle([m, m, size - m, size - m], outline="#D9C6A5", width=3)
+    draw.rectangle([m, m, size - m, size - m], outline="#" + T.PAL.TIANZI_BORDER, width=3)
     # 十字虚线
     cx = cy = size // 2
     dash = 10
@@ -265,10 +265,10 @@ def _render_tianzi_png(char, stage, tone_color=None):
     for t in range(0, size - 2 * m - 12, dash * 2):
         draw.line([(m + 6 + t, m + 6 + t),
                    (min(m + 6 + t + dash, size - m - 6), min(m + 6 + t + dash, size - m - 6))],
-                  fill="#EAD9BE", width=1)
+                  fill="#" + T.PAL.DIVIDER, width=1)
         draw.line([(size - m - 6 - t, m + 6 + t),
                    (max(size - m - 6 - t - dash, m + 6), min(m + 6 + t + dash, size - m - 6))],
-                  fill="#EAD9BE", width=1)
+                  fill="#" + T.PAL.DIVIDER, width=1)
     f = _load_font(fonts.KAI, int(sz * 1.25))
     color = "#" + (tone_color or T.PAL.TITLE_TEXT)
     if f:
@@ -520,10 +520,35 @@ def _place_element(slide, el, top, stage, idx=0) -> int:
         return top + inch(0.42) + gap
 
     if t == "image":
-        # 无网络/本地素材时留柔和占位面板
         w_in = 13.333 - 2 * T.L.MARGIN_X
-        h = inch(el.get("height", 1.6))
-        _card_panel(slide, left, top, inch(w_in), h, fill="FFF3E2")
+        h_in = float(el.get("height", 1.6))
+        h = inch(h_in)
+        src = el.get("src", "")
+        # 真实图片：src 已由 render_all 解析为绝对路径；等比缩放塞进预留框
+        if src and Path(src).is_file():
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(src) as im:
+                    iw, ih = im.size
+                if iw > 0 and ih > 0:
+                    scale = min(w_in / (iw / 96), h_in / (ih / 96), 1.0)
+                    pw, ph = (iw / 96) * scale, (ih / 96) * scale
+                    x = int(left + (inch(w_in) - inch(pw)) / 2)
+                    slide.shapes.add_picture(src, x, int(top),
+                                             width=inch(pw), height=inch(ph))
+                    cap = el.get("caption")
+                    ny = top + inch(ph)
+                    if cap:
+                        _add_textbox(slide, int(left), int(ny), inch(w_in), inch(0.3),
+                                     cap, font=fonts.HEI, size=12,
+                                     color=T.PAL.TEXT_LIGHT,
+                                     align=PP_ALIGN.CENTER)
+                        ny += inch(0.32)
+                    return max(ny, top + h) + gap
+            except Exception:
+                pass  # 图片损坏/格式不支持 → 落回占位面板
+        # 无素材时留柔和占位面板
+        _card_panel(slide, left, top, inch(w_in), h, fill=T.PAL.CARD_TINT_IMAGE)
         _add_textbox(slide, left, top, inch(w_in), h,
                      "🖼  " + (el.get("caption") or "插图（请在 PPT 中替换为实拍图）"),
                      font=fonts.HEI, size=14, color=T.PAL.TEXT_LIGHT,
@@ -581,7 +606,7 @@ def _place_quote(slide, el, top, stage):
     width = inch(13.333 - 2.4)
     n_lines = max(1, -(-len(content) // 26))
     h = inch(0.5 * n_lines + 0.5)
-    box = _card_panel(slide, left, top, width, h, fill="FFFDF7",
+    box = _card_panel(slide, left, top, width, h, fill=T.PAL.CARD_TINT_QUOTE,
                       edge_color=T.PAL.ACCENT, edge_w=1.5)
     box.line.dash_style = MSO_LINE.DASH_DOT
     _add_textbox(slide, left + inch(0.3), top, width - inch(0.6), h,
@@ -663,7 +688,7 @@ def _place_poem(slide, el, top, stage):
         h = inch(head_h * scale + sum(r[2] + 0.12 * scale for r in rows) + 0.4)
     else:
         h = inch(h_in_total)
-    _card_panel(slide, left, top, width, h, fill="FFFCF2")
+    _card_panel(slide, left, top, width, h, fill=T.PAL.CARD_TINT_POEM)
     y = top + inch(0.28)
     if title:
         _add_textbox(slide, left, y, width, inch(0.55),
@@ -786,7 +811,8 @@ def _place_revision(slide, el, top, stage):
                          color=T.PAL.TEXT_LIGHT, anchor=MSO_ANCHOR.MIDDLE)
         # 易错 / 运笔（彩色强调）
         y = ct + inch(1.02)
-        for key, label, color in (("易错点", "易错", "E2574C"), ("运笔要点", "运笔", "3E8E5A")):
+        for key, label, color in (("易错点", "易错", T.PAL.DANGER),
+                                  ("运笔要点", "运笔", T.PAL.SUCCESS)):
             v = ch.get(key, "")
             if not v:
                 continue
@@ -828,7 +854,7 @@ def _place_board(slide, el, top, stage):
         # 一级节点
         nh = 0.52
         _card_panel(slide, int(bx), int(top), inch(box_w), inch(nh),
-                    fill="FFFDF7", edge_color=accent, edge_w=1.6)
+                    fill=T.PAL.CARD_TINT_QUOTE, edge_color=accent, edge_w=1.6)
         _add_textbox(slide, int(bx), int(top), inch(box_w), inch(nh),
                      node.get("node", ""), font=fonts.HEI, size=T.font_for(stage, "body"),
                      color=accent, bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
@@ -858,7 +884,7 @@ def _place_discussion(slide, el, top, stage):
     q = el.get("question", "")
     n = max(1, -(-len(q) // 28))
     h = inch(0.5 * n + 1.0)
-    _card_panel(slide, left, top, width, h, fill="F3F9F4",
+    _card_panel(slide, left, top, width, h, fill=T.PAL.CARD_TINT_DISCUSS,
                 edge_color=T.PAL.ACCENT2, edge_w=1.4)
     badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, left + inch(0.28),
                                    top + inch(0.26), inch(0.5), inch(0.5))
@@ -917,7 +943,7 @@ def _place_table(slide, el, top, stage):
             x = T.inch(T.L.MARGIN_X + ci * col_w)
             cell = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, int(x), int(y), T.inch(col_w), inch(row_h))
             cell.fill.solid()
-            cell.fill.fore_color.rgb = _rgb("FFFFFF" if ri % 2 == 0 else "FBF3E6")
+            cell.fill.fore_color.rgb = _rgb(T.PAL.BG_CARD if ri % 2 == 0 else T.PAL.ROW_ALT)
             cell.line.color.rgb = _rgb(T.PAL.DIVIDER); cell.line.width = Pt(0.75)
             cell.shadow.inherit = False
             _add_textbox(slide, int(x), int(y), T.inch(col_w), inch(row_h),
@@ -953,7 +979,7 @@ def _place_evaluation(slide, el, top, stage):
                          for l in levels) or ""
         cell = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, int(left), int(y), width, inch(row_h))
         cell.fill.solid()
-        cell.fill.fore_color.rgb = _rgb("FFFFFF" if i % 2 == 0 else "F3F8F3")
+        cell.fill.fore_color.rgb = _rgb(T.PAL.BG_CARD if i % 2 == 0 else T.PAL.ROW_ALT_EVAL)
         _no_border(cell); cell.shadow.inherit = False
         _add_textbox(slide, left + inch(0.25), int(y), inch(4.2), inch(row_h),
                      crit, size=sz, color=T.PAL.TITLE_TEXT, bold=True, anchor=MSO_ANCHOR.MIDDLE)

@@ -59,14 +59,24 @@ def _make_report_node(emitter: Callable[[dict], None] | None):
         if files:
             _emit(emitter, {"type": "files", "files": files})
 
-        # 构建 summary
+        # 构建 summary（带 AI 审查评分摘要，让用户知道质量水位）
+        review = state.get("yuwen_review") or {}
+        scores = review.get("scores") or {}
+        review_note = ""
+        if scores:
+            label = {"structure": "结构", "pedagogy": "教学",
+                     "content": "内容", "stage_fit": "适配"}
+            parts = [f"{label.get(k, k)}{v}" for k, v in scores.items()
+                     if isinstance(v, (int, float))]
+            if parts:
+                review_note = f"（审查评分：{'/'.join(parts)}）"
         n_files = len(files)
         if n_files > 0:
             file_names = " / ".join(f["name"] for f in files)
-            answer = f"课件已生成，共 {n_files} 个文件：{file_names}"
+            answer = f"课件已生成，共 {n_files} 个文件：{file_names}{review_note}"
             detail = f"已写入 outputs/yuwen/{session}/"
         else:
-            answer = "课件内容已生成，但渲染未产出文件。"
+            answer = f"课件内容已生成，但渲染未产出文件。{review_note}"
             detail = "无产出文件"
 
         _step(emitter, "report", "交付报告", "done", detail)

@@ -1,27 +1,8 @@
-/* 小学语文课件 · 暖白大字卡片样式（与 PPTX 同一套 token） */
-:root {
-  --bg: #FDF9F1;
-  --bg-card: #FFFFFF;
-  --title-bar: #ED7D31;
-  --text: #4A3B2E;
-  --title-text: #3D2B1F;
-  --text-light: #9C8B78;
-  --accent: #ED7D31;
-  --accent2: #3E8E5A;
-  --accent3: #3E7BB6;
-  --divider: #EAD9BE;
-  /* 关键词高亮轮换色 */
-  --hl1: #3E7BB6;
-  --hl2: #3E8E5A;
-  --hl3: #E2574C;
-  --hl4: #8E6BB5;
-  /* 声调标色 */
-  --tone1: #D9534F;
-  --tone2: #E8A33C;
-  --tone3: #5BA88A;
-  --tone4: #5B8AB5;
-  --tone0: #9AA0A6;
-}
+/* 小学语文课件 · 基础样式（与 PPTX 同一套 token）。
+
+注意：`:root` 的 CSS 变量声明由 render_html.py 从主题 JSON 动态生成注入
+（assets/css 下不再有静态 :root——消灭手抄漂移）。本文件只含规则，
+所有颜色一律走 var(--)。 */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
@@ -80,7 +61,7 @@ html, body {
 .elem-quote {
   font-family: "楷体", "KaiTi", "STKaiti", serif;
   font-size: 1.8em; color: var(--accent); text-align: center;
-  padding: 0.4em 1em; background: #fff; border-radius: 12px;
+  padding: 0.4em 1em; background: var(--bg-card); border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 .elem-quote .quote-src { display: block; font-size: 0.5em; color: var(--text-light); text-align: right; }
@@ -126,7 +107,7 @@ ruby rt.t0 { color: var(--tone0); }
 .revision-card { background: var(--bg-card); border-radius: 14px; padding: 1em; display: flex; gap: 1em; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .tianzi {
   width: 130px; height: 130px; flex-shrink: 0;
-  background: #fff; border: 2px solid var(--text-light);
+  background: var(--bg-card); border: 2px solid var(--text-light);
   position: relative; display: flex; align-items: center; justify-content: center;
 }
 .tianzi::before, .tianzi::after {
@@ -146,7 +127,7 @@ ruby rt.t0 { color: var(--tone0); }
 
 /* 课堂互动 */
 .discussion {
-  background: #fff; border-left: 6px solid var(--accent2);
+  background: var(--bg-card); border-left: 6px solid var(--accent2);
   border-radius: 8px; padding: 1em 1.2em; font-size: 1.4em;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
@@ -157,13 +138,13 @@ ruby rt.t0 { color: var(--tone0); }
 /* 表格 */
 .elem-table { width: 100%; border-collapse: collapse; font-size: 1.2em; margin: 0.5em 0; }
 .elem-table th { background: var(--accent); color: #fff; padding: 0.5em; }
-.elem-table td { background: #fff; padding: 0.5em; border: 1px solid var(--divider); text-align: center; }
+.elem-table td { background: var(--bg-card); padding: 0.5em; border: 1px solid var(--divider); text-align: center; }
 .elem-table tr:nth-child(even) td { background: var(--bg); }
 
 /* 评价量表用表格同款 */
 
 /* 教师备注（默认隐藏） */
-.note { font-size: 1em; color: var(--text-light); background: #fff7ee; border-radius: 6px; padding: 0.5em 0.8em; }
+.note { font-size: 1em; color: var(--text-light); background: var(--note-bg); border-radius: 6px; padding: 0.5em 0.8em; }
 .note::before { content: "📋 "; }
 
 /* 图片 */
@@ -174,7 +155,7 @@ ruby rt.t0 { color: var(--tone0); }
 /* 导航 */
 .nav {
   position: fixed; bottom: 0; left: 0; right: 0;
-  background: rgba(61,43,31,0.85); color: #fff;
+  background: var(--nav-bg); color: #fff;
   display: flex; justify-content: space-between; align-items: center;
   padding: 0.5em 2em; font-size: 1.1em; z-index: 100;
 }
@@ -182,7 +163,7 @@ ruby rt.t0 { color: var(--tone0); }
   background: var(--accent); color: #fff; border: none; border-radius: 8px;
   padding: 0.4em 1.2em; font-size: 1em; cursor: pointer;
 }
-.nav button:hover { background: #c8622f; }
+.nav button:hover { background: var(--nav-hover); }
 .nav .counter { font-family: Consolas, monospace; }
 
 /* 进度条 */

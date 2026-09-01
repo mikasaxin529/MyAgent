@@ -5,6 +5,8 @@ import { downloadFile } from "../api";
 import MarkdownRenderer from "./MarkdownRenderer";
 import ThoughtBlock from "./ThoughtBlock";
 import FileCard from "./FileCard";
+import OutlineCard from "./OutlineCard";
+import ReviewCard from "./ReviewCard";
 
 export interface MessageBubbleProps {
   message: Message;
@@ -71,7 +73,16 @@ export default function MessageBubble({ message, identityColor, isLast, onRegene
             ))}
           </div>
         )}
-        {Array.isArray(message.chips) && message.chips.length > 0 && (
+        {message.outline && (
+          <OutlineCard
+            outline={message.outline}
+            chips={message.chips}
+            onChipClick={onChipClick}
+          />
+        )}
+        {message.review && <ReviewCard review={message.review} />}
+        {/* 有大纲时 chips 并入大纲卡底部按钮区，避免重复渲染 */}
+        {!message.outline && Array.isArray(message.chips) && message.chips.length > 0 && (
           <div className="chips">
             {message.chips.map((c, i) => (
               <button

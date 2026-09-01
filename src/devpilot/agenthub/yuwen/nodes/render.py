@@ -8,8 +8,8 @@ from typing import Callable
 
 from ..state import (
     YuwenState,
-    _OUTPUTS_DIR,
     _SCRIPTS_DIR,
+    _session_dir,
     _session_name,
     _step,
 )
@@ -44,7 +44,9 @@ def _make_render_node(emitter: Callable[[dict], None] | None):
             }
 
         session = _session_name(params)
-        session_dir = _OUTPUTS_DIR / "yuwen" / session
+        # _session_dir 内部动态查 state._OUTPUTS_DIR（跨轮盘路径唯一来源）；
+        # 模块级快照会绕过测试 patch，与其余节点行为不一致。
+        session_dir = _session_dir(params)
         session_dir.mkdir(parents=True, exist_ok=True)
 
         render_all = _SCRIPTS_DIR / "render_all.py"

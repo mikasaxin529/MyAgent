@@ -10,6 +10,7 @@
 退出码：0 成功 / 1 异常 / 2 前置缺失
 """
 from __future__ import annotations
+import os
 import sys
 import html
 import json
@@ -23,9 +24,49 @@ except Exception:
     pass
 
 from common import pinyin as py
+from common import design_tokens as T
 from common.schema import stage_short
 
+import re
+
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
+
+
+def _rgb_triplet(hexstr: str) -> str:
+    """'3D2B1F' → '61,43,31'（CSS rgba 用）。"""
+    return ",".join(str(int(hexstr[i:i + 2], 16)) for i in (0, 2, 4))
+
+
+def _theme_css_vars() -> str:
+    """由当前主题生成 :root CSS 变量块。
+
+    变量名 ↔ 主题 JSON 键映射唯一在此定义——消灭 yuwen.css 手抄漂移。
+    """
+    pal = T.ACTIVE_THEME.pal
+    tone = pal.get("TONE", {})
+    hls = pal.get("HIGHLIGHTS", [])
+    decls = [
+        ("--bg", pal["BG"]),
+        ("--bg-card", pal["BG_CARD"]),
+        ("--title-bar", pal["ACCENT"]),
+        ("--text", pal["TEXT"]),
+        ("--title-text", pal["TITLE_TEXT"]),
+        ("--text-light", pal["TEXT_LIGHT"]),
+        ("--accent", pal["ACCENT"]),
+        ("--accent2", pal["ACCENT2"]),
+        ("--accent3", pal["ACCENT3"]),
+        ("--divider", pal["DIVIDER"]),
+    ]
+    for i, c in enumerate(hls[:4]):
+        decls.append((f"--hl{i + 1}", c))
+    for k in (1, 2, 3, 4, 0):
+        decls.append((f"--tone{k}", tone.get(k, pal["TEXT_LIGHT"])))
+    # 派生量：导航底色 = 标题色 85% 透明；其余取主题扩展键
+    decls.append(("--note-bg", pal.get("NOTE_BG", "FFF7EE")))
+    decls.append(("--nav-hover", pal.get("NAV_HOVER", pal["ACCENT_DK"])))
+    lines = "".join(f"  {n}: #{v};\n" for n, v in decls)
+    return (":root {\n" + lines +
+            f"  --nav-bg: rgba({_rgb_triplet(pal['TITLE_TEXT'])},0.85);\n}}")
 
 
 def _esc(s: str) -> str:
@@ -85,7 +126,6 @@ def render_element(el: dict) -> str:
     if t == "ruby-line":
         ruby = py.html_ruby(el.get("text", ""), el.get("ruby", ""), colorize=True)
         # 给 rt 加 tone class
-        import re
         ruby = re.sub(r'<rt style="color:#([0-9A-Fa-f]{6})">',
                       lambda m: '<rt class="t' + _tone_class(m.group(1)) + '">',
                       ruby)
@@ -98,7 +138,6 @@ def render_element(el: dict) -> str:
         for stanza in el.get("stanzas", []):
             for line in stanza.get("lines", []):
                 ruby = py.html_ruby(line.get("text", ""), line.get("ruby", ""), colorize=True)
-                import re
                 ruby = re.sub(r'<rt style="color:#([0-9A-Fa-f]{6})">',
                               lambda m: '<rt class="t' + _tone_class(m.group(1)) + '">',
                               ruby)
@@ -177,6 +216,12 @@ def render_element(el: dict) -> str:
     if t == "image":
         src = el.get("src", "")
         cap = el.get("caption")
+        if src and Path(src).is_file():
+            # render_all 已把 src 解析为绝对路径；HTML 与图片同在输出目录，
+            # 相对路径引用才能单目录拷走可用
+            src = _rel_to_out(src)
+        else:
+            src = ""   # 无效/缺失文件 → 不输出破图，走占位
         img = f'<img src="{_esc(src)}">' if src else '<div style="height:30vh"></div>'
         cap_html = f'<div class="caption">{_esc(cap)}</div>' if cap else ""
         return f'<div class="elem-image">{img}{cap_html}</div>'
@@ -187,24 +232,49 @@ def render_element(el: dict) -> str:
     return ""
 
 
+# 当前渲染输出所在目录（image 相对路径基准；render() 开头设置）
+_OUT_DIR: Path | None = None
+
+
+def _rel_to_out(abs_src: str) -> str:
+    """绝对图片路径 → 相对当前 HTML 文件的路径（正斜杠，浏览器友好）。
+
+    非绝对路径原样返回（单独运行 render_html 时 src 可能本就是相对输出目录的，
+    浏览器直接可用，无需再转换）。
+    """
+    global _OUT_DIR
+    if _OUT_DIR is None or not Path(abs_src).is_absolute():
+        return abs_src
+    try:
+        return Path(os.path.relpath(abs_src, _OUT_DIR)).as_posix()
+    except ValueError:
+        return abs_src   # 跨盘符（Windows）无法相对，退回绝对路径
+
+
 def _tone_class(hexcolor: str) -> str:
-    """hex 颜色 → 声调 class 数字。与 pinyin.tone_color 反查。"""
-    m = {
-        "D9534F": "1", "E8A33C": "2", "5BA88A": "3", "5B8AB5": "4", "9AA0A6": "0",
-    }
-    return m.get(hexcolor.upper(), "0")
+    """hex 颜色 → 声调 class 数字。遍历当前主题 TONE 动态反查。"""
+    tone = T.ACTIVE_THEME.pal.get("TONE", {})
+    up = hexcolor.upper()
+    for k, v in tone.items():
+        if str(v).upper() == up:
+            return str(k)
+    return "0"
 
 
 def render(doc: dict, out_path: str) -> str:
     """渲染 doc → HTML 文件（按课时分文件）。返回主文件路径。"""
     from jinja2 import Environment, FileSystemLoader
 
+    global _OUT_DIR
+    out_path = Path(out_path)
+    _OUT_DIR = out_path.parent
+
     meta = doc["meta"]
     total = meta.get("periods", 1)
     periods = sorted(set(s.get("period", 1) for s in doc["slides"]))
 
-    # 读 CSS/JS 内联
-    css = (ASSETS / "css" / "yuwen.css").read_text(encoding="utf-8")
+    # 读 CSS/JS 内联；:root 变量块由主题生成，拼在基础规则之前
+    css = _theme_css_vars() + "\n" + (ASSETS / "css" / "yuwen-base.css").read_text(encoding="utf-8")
     js = (ASSETS / "js" / "interactivity.js").read_text(encoding="utf-8")
 
     env = Environment(loader=FileSystemLoader(str(ASSETS / "templates")),

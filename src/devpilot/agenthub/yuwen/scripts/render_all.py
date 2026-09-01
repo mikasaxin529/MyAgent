@@ -28,6 +28,29 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from common.schema import validate, SchemaError
+from common import design_tokens as T
+
+
+def resolve_image_paths(doc: dict, out_dir: Path) -> int:
+    """把 image 元素的相对 src（相对 out_dir）解析为绝对路径。
+
+    上游 pipeline 约定：doc 中 image.src 是相对 session 输出目录的路径
+    （如 "assets/s03_1.png"）。这里一次性转绝对，三个渲染器不再各自解析；
+    文件不存在的 src 原样保留（pptx 走占位面板、html 走空占位）。
+    """
+    n = 0
+    for sj in doc.get("slides", []):
+        for el in sj.get("elements", []):
+            if not isinstance(el, dict) or el.get("type") != "image":
+                continue
+            src = el.get("src") or ""
+            if not src or Path(src).is_absolute():
+                continue
+            p = (out_dir / src).resolve()
+            if p.is_file():
+                el["src"] = str(p)
+                n += 1
+    return n
 
 
 def main(argv=None):
@@ -72,9 +95,15 @@ def main(argv=None):
         out_dir = desktop / "语文课件" / f"{title}-{ltype}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # ---- 3.5 主题注入 + 图片路径解析（子进程隔离，set 全局安全）----
+    theme_name = doc.get("meta", {}).get("theme") or "default"
+    T.set_theme(theme_name)
+    n_img = resolve_image_paths(doc, out_dir)
+
     # 安全文件名
     safe_title = "".join(c for c in title if c not in '\\/:*?"<>|')
     print(f"\n=== 开始渲染：{title} · {ltype} ===")
+    print(f"主题：{T.ACTIVE_THEME.name}" + (f" · 真实图片 {n_img} 张" if n_img else ""))
     print(f"输出目录：{out_dir}\n")
 
     results = {}

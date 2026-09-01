@@ -40,3 +40,12 @@ tester: "deepseek:deepseek-chat"
 reflector: "deepseek:deepseek-chat"   # 反思节点（判 done/continue/retry，产 JSON 标签）
 extractor: "deepseek:deepseek-chat"   # 抽取记忆事实（可降 ollama 省钱）
 # compressor 不调 LLM（仅写 JSONL），无需绑定。
+
+# 语文课件多阶段管线分节点模型（阶段 2a）
+# 留空串 = 走网关默认主备链（deepseek→qwen）。可配轻模型省成本：
+# 大纲/确认/改纲用轻量模型足够（输出短、结构固定）。
+yuwen_outline: ""
+# 逐页正文生成 + 单页修订：内容质量主战场，留空走默认强模型链。
+yuwen_slide: ""
+# AI 审查评分 + 教案/学习单生成：判断与归纳任务。
+yuwen_review: ""

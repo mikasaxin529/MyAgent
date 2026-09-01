@@ -359,6 +359,22 @@ export default function ChatPage() {
           patchAssistant((m) => ({ ...m, files: fileList }));
           project();
         },
+        onOutline: (outline, chips) => {
+          patchAssistant((m) => {
+            const updated: Message = { ...m, outline };
+            // outline 帧的 chips 与已到达的 content 帧 chips 合并去重
+            if (Array.isArray(chips) && chips.length > 0) {
+              const prev = Array.isArray(m.chips) ? m.chips : [];
+              updated.chips = [...prev, ...chips.filter((c) => !prev.includes(c))];
+            }
+            return updated;
+          });
+          project();
+        },
+        onReview: (review) => {
+          patchAssistant((m) => ({ ...m, review }));
+          project();
+        },
         onAgentMeta: (meta) => {
           if (!inView()) return;
           setCurrentAgent((prev) => {

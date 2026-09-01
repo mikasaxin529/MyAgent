@@ -1,19 +1,50 @@
-"""语文智能体图组装（阶段 1 骨架）。
+"""语文智能体图组装（阶段 2a：多阶段管线）。
 
-目标管线（阶段 2 逐节点实现）：
-  extract_params（对话追问收集参数）
-  → gen_outline（生成大纲，待实现）
-  → 用户确认大纲（待实现）
-  → gen_slides（逐页生成内容，待实现）
-  → review（AI 审查，待实现）
-  → revise（按审查意见修订，待实现）
-  → gen_images（AI 生图，待实现）
-  → render（渲染 pptx/html/docx 三件套）
+管线：
+  extract_params（对话收参数）
+  → gen_outline（生成大纲 → END，等用户确认）
+  → confirm（查盘恢复大纲：确认放行 / 切主题 / 改纲 → END 或继续）
+  → gen_slides（逐页生成 + 页级反思重试）
+  → gen_plan（教案 + 学习单）
+  → review（AI 审查评分）⇄ revise（按问题清单修订，≤2 轮）
+  → gen_images（AI 配图回填，无 key 跳过）
+  → render（subprocess 三件套）
   → report（交付汇总）
 
-当前仍为阶段 1 之前的 4 节点行为（extract_params → gen_content → render →
-report），节点实现拆分至 nodes/ 子包，共享状态与基础设施在 state.py，
-提示词在 prompts.py。本模块只做图组装与条件边。
+跨轮状态机原理（本图的心脏）：
+  langgraph 每轮请求都 build_graph 新实例 + astream 全新 state——图内没有
+  任何检查点。跨轮记忆全部走磁盘 state.json（session 目录下，_OUTPUTS_DIR/
+  yuwen/<会话名>/state.json，由 params 派生会话名，天然与 render/report 同键）。
+  关键在 extract_params 之后的**条件路由函数 _route_after_params 每轮重新
+  求值且查盘**：同一条边在不同轮根据"盘上有没有大纲 / 大纲确认了没有"
+  走不同分支——
+    params_ready 且盘上无 outline        → gen_outline（首轮生成大纲）
+    params_ready 且盘上有 outline 未确认 → confirm（用户回复确认/改纲）
+    params_ready 且盘上 outline 已确认   → gen_slides（罕见：确认后中断续跑）
+    params 未 ready 但消息像大纲指令     → confirm（chip 点击/确认词被参数
+                                          提取误判时兜底，_find_pending_session
+                                          从盘上找回会话）
+    其余                                → END（追问后等下一轮）
+  gen_outline / confirm（未确认路径）都以 END 收尾——本轮到此为止，用户下一轮
+  的消息重新进图，路由查盘把流程接上。这就是"无状态图 + 有状态盘"实现的
+  多轮人机协同管线。
+
+帧契约（与前端 2c 的接口，其余帧类型沿用阶段 1）：
+  {"type": "outline", "outline": {pages:[{id,kind,title,points,period}], meta:{...}},
+   "chips": ["确认大纲，开始生成", "第1页改成…", "换青蓝主题", "换墨绿主题"]}
+  {"type": "review", "review": {"scores": {structure,pedagogy,content,stage_fit},
+                                "issues": [{page_id, problems:[str]}], "pass": bool}}
+  meta.theme ∈ default / fresh-blue / warm-green（渲染器由 renderer agent 消费）。
+  gen_images 回写的 image.src 是**相对 session 目录**路径（如 "assets/s03_2.png"），
+  渲染器需解析为绝对路径。
+
+模型绑定：config/agents.yaml 的 yuwen_outline / yuwen_slide / yuwen_review
+三个键（"provider:model" 或空串走默认链）。分节点消费方：
+  yuwen_outline → gen_outline + confirm（改纲 LLM）
+  yuwen_slide   → gen_slides + revise
+  yuwen_review  → review + gen_plan
+注意：Gateway.chat 目前不支持 provider 参数（只有 stream_chat 支持），
+nodes/_page._call_llm 按签名探测传参，chat 绑定暂静默降级默认链。
 """
 from __future__ import annotations
 
@@ -22,23 +53,100 @@ from typing import Any, Callable
 from langgraph.graph import END, StateGraph
 
 from .nodes import (
+    _make_confirm_node,
     _make_extract_params_node,
-    _make_gen_content_node,
+    _make_gen_images_node,
+    _make_gen_outline_node,
+    _make_gen_plan_node,
+    _make_gen_slides_node,
     _make_render_node,
     _make_report_node,
+    _make_review_node,
+    _make_revise_node,
 )
-from .state import YuwenState
+from .state import (
+    YuwenState,
+    _find_pending_session,
+    _load_state,
+    _looks_like_outline_command,
+)
 
 
 # ---------------------------------------------------------------------------
-# 条件边：_params_ready
+# 模型绑定读取
 # ---------------------------------------------------------------------------
 
-def _params_ready(state: YuwenState) -> str:
-    """条件边：参数齐备 → gen_content；否则 → END。"""
-    if state.get("yuwen_params_ready"):
-        return "gen_content"
+def _model_kwargs_for(agent_key: str) -> dict:
+    """从 agents.yaml 取该节点绑定的 provider/model。
+
+    复用 devpilot.config.load_agent_models（与 general 图同一 loader，
+    yaml 缺失/解析失败优雅降级）。绑定为空串或解析不出 provider → 返回
+    {}（不传参走网关默认主备链）。
+    """
+    try:
+        from ...config import load_agent_models
+        provider, model = load_agent_models().get(agent_key, ("", ""))
+    except Exception:  # noqa: BLE001 - 配置读取失败不阻断建图
+        return {}
+    kw: dict = {}
+    if provider:
+        kw["provider"] = provider
+    if model:
+        kw["model"] = model
+    return kw
+
+
+# ---------------------------------------------------------------------------
+# 条件边：跨轮状态机路由
+# ---------------------------------------------------------------------------
+
+def _route_after_params(state: YuwenState) -> str:
+    """extract_params 出口路由：查盘决定本轮该走大纲生成、确认还是 END。
+
+    这是跨轮状态机的求值点——每轮新图实例跑这条边，盘上状态变了分支就变。
+    """
+    if not state.get("yuwen_params_ready"):
+        # 参数不齐：但用户可能点的是大纲 chip（"确认大纲，开始生成"）或
+        # 主题切换词——extract_params 的 LLM 抽不出课文名，params_ready
+        # 为 False。此时若盘上有待确认大纲，兜底进 confirm。
+        if _looks_like_outline_command(
+                state.get("user_message") or state.get("task", "")):
+            pending = _find_pending_session()
+            if pending is not None:
+                return "confirm"
+        return "__end__"
+
+    params = state.get("yuwen_params", {})
+    disk = _load_state(params)
+    outline = disk.get("yuwen_outline") or {}
+    if not outline.get("pages"):
+        return "gen_outline"
+    if disk.get("yuwen_outline_confirmed"):
+        # 已确认（上一轮 confirm 放行但生成中断/或确认后用户又发消息）：
+        # 直接续跑逐页生成。confirm 节点里 already_confirmed 也放行，双保险。
+        return "gen_slides"
+    return "confirm"
+
+
+def _route_after_confirm(state: YuwenState) -> str:
+    """confirm 出口：确认放行 → gen_slides；未确认（改纲/切主题）→ END 等下轮。"""
+    if state.get("yuwen_outline_confirmed"):
+        return "gen_slides"
     return "__end__"
+
+
+def _route_after_review(state: YuwenState) -> str:
+    """review 出口：pass → 配图；不 pass 且修订 <2 轮 → revise；轮数耗尽 → 放行。
+
+    审查是提质不是阻断——2 轮修订仍不过就带着问题继续渲染，
+    report 里注明评分，用户可手动改产物。
+    """
+    review = state.get("yuwen_review") or {}
+    if review.get("pass"):
+        return "gen_images"
+    if int(state.get("yuwen_revise_rounds") or 0) < 2:
+        return "revise"
+    return "gen_images"
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +163,7 @@ def build_graph(
 
     参数：
         gateway:  模型网关（gateway.chat / gateway.stream_chat）
-        registry: Skill 注册中心（本图暂不使用）
+        registry: Skill 注册中心（本图不使用）
         audit:    审计日志（可选）
         emitter:  事件回调，节点把帧推给 web 层
 
@@ -64,27 +172,58 @@ def build_graph(
     """
     graph = StateGraph(YuwenState)
 
+    # 分节点模型绑定（yaml 每次建图重读，改配置即时生效）
+    kw_outline = _model_kwargs_for("yuwen_outline")
+    kw_slide = _model_kwargs_for("yuwen_slide")
+    kw_review = _model_kwargs_for("yuwen_review")
+
     # 注册节点
     graph.add_node("extract_params", _make_extract_params_node(gateway, emitter))
-    graph.add_node("gen_content", _make_gen_content_node(gateway, emitter))
+    graph.add_node("gen_outline", _make_gen_outline_node(gateway, emitter, kw_outline))
+    graph.add_node("confirm", _make_confirm_node(gateway, emitter, kw_outline))
+    graph.add_node("gen_slides", _make_gen_slides_node(gateway, emitter, kw_slide))
+    graph.add_node("gen_plan", _make_gen_plan_node(gateway, emitter, kw_review))
+    graph.add_node("review", _make_review_node(gateway, emitter, kw_review))
+    graph.add_node("revise", _make_revise_node(gateway, emitter, kw_slide))
+    graph.add_node("gen_images", _make_gen_images_node(emitter))
     graph.add_node("render", _make_render_node(emitter))
     graph.add_node("report", _make_report_node(emitter))
 
     # 入口
     graph.set_entry_point("extract_params")
 
-    # extract_params 条件出边：参数齐备 → gen_content；否则 → END
+    # extract_params →（跨轮路由）→ gen_outline / confirm / gen_slides / END
     graph.add_conditional_edges(
         "extract_params",
-        _params_ready,
+        _route_after_params,
         {
-            "gen_content": "gen_content",
+            "gen_outline": "gen_outline",
+            "confirm": "confirm",
+            "gen_slides": "gen_slides",
             "__end__": END,
         },
     )
 
-    # 主链
-    graph.add_edge("gen_content", "render")
+    # 大纲 → END（本轮结束，等用户确认）
+    graph.add_edge("gen_outline", END)
+
+    # confirm → 确认放行继续生成 / 未确认 END 等下一轮
+    graph.add_conditional_edges(
+        "confirm",
+        _route_after_confirm,
+        {"gen_slides": "gen_slides", "__end__": END},
+    )
+
+    # 主链：逐页生成 → 教案 → 审查 ⇄ 修订 → 配图 → 渲染 → 报告
+    graph.add_edge("gen_slides", "gen_plan")
+    graph.add_edge("gen_plan", "review")
+    graph.add_conditional_edges(
+        "review",
+        _route_after_review,
+        {"revise": "revise", "gen_images": "gen_images"},
+    )
+    graph.add_edge("revise", "review")  # 修订后再评一轮
+    graph.add_edge("gen_images", "render")
     graph.add_edge("render", "report")
     graph.add_edge("report", END)
 

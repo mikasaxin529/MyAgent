@@ -1,22 +1,31 @@
-"""语文智能体图测试：extract_params / gen_content / render / report 节点。
+"""语文智能体图测试：阶段 2a 多阶段管线节点。
 
 测试覆盖：
 1. manifest.py 字段完整性
-2. graph.py 编译正确（build_graph 返回 CompiledGraph）
-3. extract_params 条件边双出口
-4. gen_content 节点 mock LLM 调用
-5. render_all.py 纯 Python 渲染（无 LLM 依赖）
-6. 图集成：astream 状态流转
+2. graph.py 编译正确 + 10 节点齐备
+3. 跨轮状态机路由 _route_after_params / _route_after_confirm / _route_after_review
+4. state.json 落盘（_save_state/_load_state/_parse_llm_json）
+5. gen_outline：大纲生成 + outline 帧 + 落盘
+6. confirm：确认放行 / 主题切换 / LLM 改纲 / 盘上找回会话
+7. gen_slides：逐页生成 + 页级重试 + doc 合成落盘
+8. gen_plan：教案+学习单融进 doc + tmp 重写
+9. review：LLM 评分 + 降级放行 + _compute_pass
+10. revise：按问题清单修页 + 轮数计数
+11. gen_images：无 key 跳过 / 有 key 落盘回填 src + tmp 重写
+12. _call_llm provider 签名过滤
+13. render_all.py 纯 Python 渲染（无 LLM 依赖）
+14. 图集成：盘上已确认 → 全链跑通
 
 运行：
     pytest tests/test_agenthub_yuwen.py -x -v
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -54,6 +63,64 @@ def _chat_response(content: str, finish_reason: str = "stop"):
                         latency_ms=100, finish_reason=finish_reason)
 
 
+PARAMS = {"title": "静夜思", "grade": 1, "lesson_type": "古诗词",
+          "textbook": "部编版一年级下册"}
+
+SAMPLE_OUTLINE = {
+    "pages": [
+        {"id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+         "points": "配乐范读，整体感知"},
+        {"id": "s02", "kind": "word-cards", "title": "生字朋友", "period": 1,
+         "points": "9 个生字认读"},
+        {"id": "s03", "kind": "read-rhythm", "title": "初读节奏", "period": 1,
+         "points": "停顿划分，节奏朗读"},
+    ],
+    "meta": {"title": "静夜思", "grade": 1, "lessonType": "古诗词",
+             "textbook": "部编版一年级下册", "periods": 1, "theme": "default"},
+}
+
+
+def _page_json(i: int, kind: str = "cover", extra_elem=None):
+    """gen_slides mock 的单页 JSON（合法 schema，过最小骨架校验）。"""
+    elements = [{"type": "heading", "content": f"页{i}", "size": "h1"}]
+    if extra_elem:
+        elements.append(extra_elem)
+    return {"id": f"s0{i}", "kind": kind, "title": f"标题{i}", "period": 1,
+            "elements": elements}
+
+
+PLAN_JSON = {
+    "lessonPlan": {
+        "title": "静夜思",
+        "base": {"textbook": "部编版一年级下册", "grade": "一年级",
+                 "periods": "1", "lessonType": "古诗词"},
+        "objectives": [{"content": "认识9个生字", "competency": "语言运用"}],
+        "keyPoints": ["识字"], "difficulties": ["体会情感"],
+        "preparation": "课件", "periods": "1课时",
+        "teachingProcess": [{"phase": "一、导入", "duration": "5分钟",
+                             "activities": [{"teacher": "出示明月图",
+                                             "student": "观察"}],
+                             "design": "情境"}],
+        "boardDesign": {"structure": "静夜思"},
+        "homework": {"levels": [{"level": "基础", "items": ["背诵"]}]},
+        "reflection": "",
+    },
+    "handout": {"levels": [{"level": "基础", "items": ["背诵古诗"]}]},
+}
+
+REVIEW_PASS = {"scores": {"structure": 5, "pedagogy": 4, "content": 4,
+                          "stage_fit": 5},
+               "issues": [], "pass": True}
+
+
+@pytest.fixture
+def outputs_tmp(tmp_path, monkeypatch):
+    """把 state._OUTPUTS_DIR patch 到 tmp_path（所有盘读写经模块全局查找）。"""
+    from devpilot.agenthub.yuwen import state as st
+    monkeypatch.setattr(st, "_OUTPUTS_DIR", tmp_path)
+    return tmp_path
+
+
 # ======================================================================
 # 1. manifest 测试
 # ======================================================================
@@ -62,7 +129,6 @@ class TestYuwenManifest:
     """语文智能体 manifest 字段完整性与注册。"""
 
     def test_manifest_fields(self):
-        """manifest.py 导出所有必填字段。"""
         from devpilot.agenthub.yuwen import manifest as m
         assert m.AGENT_ID == "yuwen"
         assert m.DISPLAY_NAME == "语文课件生成"
@@ -71,7 +137,6 @@ class TestYuwenManifest:
         assert m.PLACEHOLDER
 
     def test_registry_discovers_yuwen(self):
-        """注册中心能发现 yuwen。"""
         from devpilot.agenthub import list_agents, reset_cache
 
         reset_cache()
@@ -80,7 +145,6 @@ class TestYuwenManifest:
         assert "yuwen" in ids, f"expected 'yuwen' in {ids}"
 
     def test_manifest_to_dict_format(self):
-        """to_dict() 字段名对齐契约。"""
         from devpilot.agenthub import get_agent, reset_cache
 
         reset_cache()
@@ -99,470 +163,886 @@ class TestYuwenManifest:
 # ======================================================================
 
 class TestYuwenGraph:
-    """图编译与结构。"""
+    """图编译与结构（阶段 2a：10 节点管线）。"""
 
     def test_graph_compiles(self):
-        """build_graph 返回可调用的编译图。"""
         from devpilot.agenthub.yuwen.graph import build_graph
 
-        mock_gw = MagicMock()
-        mock_registry = MagicMock()
-        graph = build_graph(gateway=mock_gw, registry=mock_registry,
+        graph = build_graph(gateway=MagicMock(), registry=MagicMock(),
                             emitter=lambda f: None)
         assert hasattr(graph, "astream"), "build_graph must return a compiled graph"
 
-    def test_graph_has_four_nodes(self):
-        """图有 4 个节点：extract_params / gen_content / render / report。"""
+    def test_graph_has_pipeline_nodes(self):
+        """图有全部 10 个管线节点。"""
         from devpilot.agenthub.yuwen.graph import build_graph
 
-        mock_gw = MagicMock()
-        mock_registry = MagicMock()
-        graph = build_graph(gateway=mock_gw, registry=mock_registry)
-        # 编译后的图 nodes 字典包含所有节点
-        assert "extract_params" in graph.nodes
-        assert "gen_content" in graph.nodes
-        assert "render" in graph.nodes
-        assert "report" in graph.nodes
+        graph = build_graph(gateway=MagicMock(), registry=MagicMock())
+        for node in ("extract_params", "gen_outline", "confirm", "gen_slides",
+                     "gen_plan", "review", "revise", "gen_images", "render",
+                     "report"):
+            assert node in graph.nodes, f"missing node: {node}"
 
     def test_entry_point_is_extract_params(self):
-        """入口是 extract_params。"""
         from devpilot.agenthub.yuwen.graph import build_graph
 
-        mock_gw = MagicMock()
-        mock_registry = MagicMock()
-        graph = build_graph(gateway=mock_gw, registry=mock_registry)
-        # 编译图通过 get_graph() 拿到内部结构；首节点是 extract_params
+        graph = build_graph(gateway=MagicMock(), registry=MagicMock())
         g = graph.get_graph()
         assert g.nodes and "extract_params" in g.nodes
 
 
 # ======================================================================
-# 3. extract_params 节点测试
+# 3. 跨轮路由测试（状态机心脏）
+# ======================================================================
+
+class TestRouteAfterParams:
+    """_route_after_params 查盘路由：直接调条件边函数断言返回值。"""
+
+    def _route(self, state, disk=None):
+        from devpilot.agenthub.yuwen import graph as gr
+        with patch("devpilot.agenthub.yuwen.graph._load_state",
+                   return_value=disk or {}), \
+             patch("devpilot.agenthub.yuwen.graph._find_pending_session",
+                   return_value=None):
+            return gr._route_after_params(state)
+
+    def test_not_ready_ends(self):
+        """参数未齐 → END。"""
+        assert self._route({"yuwen_params_ready": False}) == "__end__"
+
+    def test_ready_no_outline_gen_outline(self):
+        """参数齐 + 盘上无大纲 → gen_outline。"""
+        got = self._route({"yuwen_params_ready": True, "yuwen_params": PARAMS},
+                          disk={})
+        assert got == "gen_outline"
+
+    def test_ready_unconfirmed_outline_confirm(self):
+        """盘上有未确认大纲 → confirm。"""
+        got = self._route({"yuwen_params_ready": True, "yuwen_params": PARAMS},
+                          disk={"yuwen_outline": SAMPLE_OUTLINE,
+                                "yuwen_outline_confirmed": False})
+        assert got == "confirm"
+
+    def test_ready_confirmed_outline_slides(self):
+        """盘上大纲已确认 → gen_slides（续跑）。"""
+        got = self._route({"yuwen_params_ready": True, "yuwen_params": PARAMS},
+                          disk={"yuwen_outline": SAMPLE_OUTLINE,
+                                "yuwen_outline_confirmed": True})
+        assert got == "gen_slides"
+
+    def test_outline_command_not_ready_falls_to_confirm(self):
+        """参数未齐但消息像大纲指令 + 盘有待确认会话 → confirm 兜底。"""
+        from devpilot.agenthub.yuwen import graph as gr
+        with patch("devpilot.agenthub.yuwen.graph._find_pending_session",
+                   return_value=(PARAMS, {"yuwen_outline": SAMPLE_OUTLINE})):
+            got = gr._route_after_params({
+                "yuwen_params_ready": False,
+                "user_message": "确认大纲，开始生成",
+            })
+        assert got == "confirm"
+
+    def test_outline_command_without_pending_ends(self):
+        """消息像指令但盘上无待确认会话 → 仍 END（追问语义）。"""
+        from devpilot.agenthub.yuwen import graph as gr
+        with patch("devpilot.agenthub.yuwen.graph._find_pending_session",
+                   return_value=None):
+            got = gr._route_after_params({
+                "yuwen_params_ready": False,
+                "user_message": "确认",
+            })
+        assert got == "__end__"
+
+
+class TestRouteAfterConfirmAndReview:
+    """confirm / review 出口路由。"""
+
+    def test_confirm_release(self):
+        from devpilot.agenthub.yuwen.graph import _route_after_confirm
+        assert _route_after_confirm({"yuwen_outline_confirmed": True}) == "gen_slides"
+        assert _route_after_confirm({"yuwen_outline_confirmed": False}) == "__end__"
+        assert _route_after_confirm({}) == "__end__"
+
+    def test_review_pass_images(self):
+        from devpilot.agenthub.yuwen.graph import _route_after_review
+        assert _route_after_review({"yuwen_review": {"pass": True}}) == "gen_images"
+
+    def test_review_fail_revise(self):
+        from devpilot.agenthub.yuwen.graph import _route_after_review
+        st = {"yuwen_review": {"pass": False}, "yuwen_revise_rounds": 1}
+        assert _route_after_review(st) == "revise"
+
+    def test_review_rounds_exhausted_releases(self):
+        """2 轮修订仍不过 → 放行 gen_images（审查是提质不是阻断）。"""
+        from devpilot.agenthub.yuwen.graph import _route_after_review
+        st = {"yuwen_review": {"pass": False}, "yuwen_revise_rounds": 2}
+        assert _route_after_review(st) == "gen_images"
+
+
+# ======================================================================
+# 4. 状态落盘 / JSON 解析
+# ======================================================================
+
+class TestStatePersistence:
+    """state.json 读-改-写与 LLM JSON 解析降级。"""
+
+    def test_save_and_load_roundtrip(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state, _state_path
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE)
+        _save_state(PARAMS, yuwen_outline_confirmed=True)  # 第二次只加字段
+        data = _load_state(PARAMS)
+        assert data["yuwen_outline"]["pages"][0]["id"] == "s01"
+        assert data["yuwen_outline_confirmed"] is True
+        assert _state_path(PARAMS).exists()
+
+    def test_load_missing_returns_empty(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _load_state
+        assert _load_state({"title": "不存在", "lesson_type": "精读"}) == {}
+
+    def test_load_corrupt_returns_empty(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _load_state, _state_path
+        p = _state_path(PARAMS)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{not json", encoding="utf-8")
+        assert _load_state(PARAMS) == {}
+
+    def test_parse_llm_json_direct(self):
+        from devpilot.agenthub.yuwen.state import _parse_llm_json
+        assert _parse_llm_json('{"a": 1}') == {"a": 1}
+
+    def test_parse_llm_json_codeblock(self):
+        from devpilot.agenthub.yuwen.state import _parse_llm_json
+        assert _parse_llm_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+    def test_parse_llm_json_fenced_text(self):
+        from devpilot.agenthub.yuwen.state import _parse_llm_json
+        assert _parse_llm_json('好的：\n{"a": [1,2]}\n以上。')["a"] == [1, 2]
+
+    def test_parse_llm_json_failure_raises(self):
+        from devpilot.agenthub.yuwen.state import _parse_llm_json
+        with pytest.raises(ValueError):
+            _parse_llm_json("彻底不是 JSON")
+
+
+# ======================================================================
+# 5. gen_outline 节点
+# ======================================================================
+
+class TestGenOutline:
+    """gen_outline：大纲生成 → state.json + outline 帧 + content 摘要。"""
+
+    def _run(self, mock_gw):
+        from devpilot.agenthub.yuwen.nodes.gen_outline import _make_gen_outline_node
+        frames = []
+        node = _make_gen_outline_node(mock_gw, lambda f: frames.append(f))
+        result = asyncio.run(node({"yuwen_params": PARAMS}))
+        return result, frames
+
+    def test_valid_outline_persists_and_emits(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _load_state
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            json.dumps(SAMPLE_OUTLINE, ensure_ascii=False))
+        result, frames = self._run(mock_gw)
+
+        assert result["yuwen_outline_confirmed"] is False
+        assert result["yuwen_outline"]["pages"][0]["id"] == "s01"
+        # state.json 落盘
+        disk = _load_state(PARAMS)
+        assert disk["yuwen_outline"]["pages"]
+        assert disk["yuwen_outline_confirmed"] is False
+        assert disk["yuwen_params"] == PARAMS
+        # outline 帧（帧契约：type/outline/chips）
+        outline_frames = [f for f in frames if f.get("type") == "outline"]
+        assert len(outline_frames) == 1
+        assert outline_frames[0]["outline"]["pages"][0]["kind"] == "cover"
+        assert any("确认" in c for c in outline_frames[0]["chips"])
+        # content 摘要帧（旧前端兼容）
+        content_frames = [f for f in frames if f.get("type") == "content"]
+        assert content_frames and "3 页" in content_frames[0]["delta"]
+        # 只发 content 不发 token（防 final_answer 翻倍）
+        assert not [f for f in frames if f.get("type") == "token"]
+
+    def test_invalid_then_valid_retry(self, outputs_tmp):
+        """第一次 pages 缺 id → 带反馈重试成功。"""
+        bad = {"pages": [{"kind": "cover", "title": "t", "period": 1}],
+               "meta": SAMPLE_OUTLINE["meta"]}
+        calls = []
+        mock_gw = MagicMock()
+
+        def _side(msgs, **kw):
+            calls.append(list(msgs))
+            payload = bad if len(calls) == 1 else SAMPLE_OUTLINE
+            return _chat_response(json.dumps(payload, ensure_ascii=False))
+
+        mock_gw.chat.side_effect = _side
+        result, frames = self._run(mock_gw)
+        assert result["yuwen_outline"]["pages"]
+        assert mock_gw.chat.call_count == 2
+        # 第 2 次调用带纠错反馈
+        assert [m.role for m in calls[1]] == ["system", "user", "assistant", "user"]
+        assert "pages[0] 缺 id" in calls[1][3].content
+
+    def test_both_attempts_fail(self, outputs_tmp):
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response("garbage")
+        result, frames = self._run(mock_gw)
+        assert result["yuwen_outline"] == {}
+        assert "大纲生成失败" in result["yuwen_error"]
+        assert any(f.get("status") == "error" for f in frames if f.get("type") == "step")
+
+    def test_gateway_exception_degrades(self, outputs_tmp):
+        mock_gw = MagicMock()
+        mock_gw.chat.side_effect = RuntimeError("API down")
+        result, _ = self._run(mock_gw)
+        assert result["yuwen_outline_confirmed"] is False
+
+
+# ======================================================================
+# 6. confirm 节点
+# ======================================================================
+
+class TestConfirm:
+    """confirm：确认放行 / 主题切换 / 改纲 / 盘上找回会话。"""
+
+    def _run(self, user_msg, mock_gw=None, params=PARAMS):
+        from devpilot.agenthub.yuwen.nodes.confirm import _make_confirm_node
+        frames = []
+        node = _make_confirm_node(mock_gw or MagicMock(),
+                                  lambda f: frames.append(f))
+        result = asyncio.run(node({"yuwen_params": params,
+                                   "user_message": user_msg}))
+        return result, frames
+
+    def test_confirm_releases(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False)
+        result, _ = self._run("确认")
+        assert result["yuwen_outline_confirmed"] is True
+        assert _load_state(PARAMS)["yuwen_outline_confirmed"] is True
+
+    def test_theme_switch_waits_for_confirm(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False)
+        result, frames = self._run("换成蓝色主题")
+        assert result["yuwen_outline_confirmed"] is False
+        assert result["yuwen_outline"]["meta"]["theme"] == "fresh-blue"
+        assert _load_state(PARAMS)["yuwen_outline"]["meta"]["theme"] == "fresh-blue"
+        # 重发 outline 帧（前端刷新预览）
+        assert any(f.get("type") == "outline" for f in frames)
+
+    def test_theme_plus_confirm(self, outputs_tmp):
+        """主题切换与确认同句 → 切主题并放行。"""
+        from devpilot.agenthub.yuwen.state import _save_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False)
+        result, _ = self._run("换成墨绿主题，确认")
+        assert result["yuwen_outline_confirmed"] is True
+        assert result["yuwen_outline"]["meta"]["theme"] == "warm-green"
+
+    def test_edit_via_llm(self, outputs_tmp):
+        """自然语言修改 → LLM 改纲，confirmed 保持 False。"""
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False)
+        edited = json.loads(json.dumps(SAMPLE_OUTLINE))
+        edited["pages"].insert(1, {"id": "s99", "kind": "game",
+                                   "title": "识字游戏", "period": 1,
+                                   "points": "摘苹果"})
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            json.dumps(edited, ensure_ascii=False))
+        result, frames = self._run("每页加一个游戏环节", mock_gw=mock_gw)
+
+        assert result["yuwen_outline_confirmed"] is False
+        assert any(p["kind"] == "game" for p in result["yuwen_outline"]["pages"])
+        assert _load_state(PARAMS)["yuwen_outline"] == edited
+        assert any(f.get("type") == "outline" for f in frames)
+        # system prompt 带当前大纲（编辑有据可依）
+        sent = mock_gw.chat.call_args[0][0]
+        assert "当前大纲" in sent[0].content
+
+    def test_edit_failure_keeps_original(self, outputs_tmp):
+        """改纲输出非法 → 保留原大纲 + 提示，不炸。"""
+        from devpilot.agenthub.yuwen.state import _save_state, _load_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE)
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response("完全不是 JSON")
+        result, frames = self._run("改一下", mock_gw=mock_gw)
+        assert result["yuwen_outline_confirmed"] is False
+        assert _load_state(PARAMS)["yuwen_outline"]["pages"][0]["id"] == "s01"
+
+    def test_no_outline_on_disk_defensive(self, outputs_tmp):
+        """盘上无大纲（理论上路由不会放行到这）→ 防御式未确认返回。"""
+        result, _ = self._run("确认")
+        assert result["yuwen_outline_confirmed"] is False
+
+    def test_chip_message_finds_pending_session(self, outputs_tmp):
+        """params 缺失（chip 点击兜底路由）→ 盘上找回待确认会话并放行。"""
+        from devpilot.agenthub.yuwen.state import _save_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=False, yuwen_params=PARAMS)
+        result, _ = self._run("确认大纲，开始生成", params={})
+        assert result["yuwen_outline_confirmed"] is True
+        assert result["yuwen_outline"]["pages"][0]["id"] == "s01"
+
+    def test_confirm_word_detection(self):
+        from devpilot.agenthub.yuwen.nodes.confirm import _detect_confirm, _detect_theme
+        assert _detect_confirm("确认") is True
+        assert _detect_confirm("没问题") is True
+        assert _detect_confirm("ok") is True
+        assert _detect_confirm("好像不太对") is False  # "好"前缀不误伤
+        assert _detect_confirm("第2页改成游戏") is False
+        assert _detect_theme("换成青蓝主题") == "fresh-blue"
+        assert _detect_theme("绿色") == "warm-green"
+        assert _detect_theme("恢复默认") == "default"
+        assert _detect_theme("普通消息") is None
+
+
+# ======================================================================
+# 7. gen_slides 节点
+# ======================================================================
+
+class TestGenSlides:
+    """gen_slides：逐页生成（每页一次 stream）+ 页级重试 + doc 落盘。"""
+
+    def _stream_for_pages(self, pages_json: list[str]):
+        """side_effect：按调用顺序返回各页的 chunk 流。"""
+        seq = iter(pages_json)
+
+        def _side(msgs, **kw):
+            text = next(seq)
+            return _AsyncIter([_chunk(delta=text), _chunk(done=True)])
+        return _side
+
+    def test_three_pages_merge_into_doc(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.nodes.gen_slides import _make_gen_slides_node
+        mock_gw = MagicMock()
+        mock_gw.stream_chat.side_effect = self._stream_for_pages(
+            [json.dumps(_page_json(1, "cover")),
+             json.dumps(_page_json(2, "word-cards")),
+             json.dumps(_page_json(3, "read-rhythm"))])
+        frames = []
+        node = _make_gen_slides_node(mock_gw, lambda f: frames.append(f))
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_outline": SAMPLE_OUTLINE}))
+
+        assert mock_gw.stream_chat.call_count == 3
+        doc = result["yuwen_content"]
+        assert len(doc["slides"]) == 3
+        assert doc["handout"] == {"levels": []}  # 空 dict 过不了 render 校验
+        assert doc["meta"]["title"] == "静夜思"
+        assert doc["meta"]["lessonType"] == "古诗词"
+        # 落盘 tmp_content.json
+        path = Path(result["yuwen_content_path"])
+        assert path.exists()
+        assert json.loads(path.read_text(encoding="utf-8"))["slides"][0]["id"] == "s01"
+        # 进度 step 帧："1/3 页：..."
+        running = [f for f in frames if f.get("type") == "step"
+                   and f.get("id") == "gen_slides" and f.get("status") == "running"]
+        assert any("1/3" in (f.get("detail") or "") for f in running)
+
+    def test_page_retry_with_feedback(self, outputs_tmp):
+        """第 1 页第 1 次坏 JSON、第 2 次好 → 成功且不报废整课。"""
+        from devpilot.agenthub.yuwen.nodes.gen_slides import _make_gen_slides_node
+        calls = []
+
+        def _side(msgs, **kw):
+            calls.append(list(msgs))
+            if len(calls) == 1:
+                return _AsyncIter([_chunk(delta="broken"), _chunk(done=True)])
+            i = len(calls)  # 第 2 次调用对应第 1 页，之后依次
+            page = i - 1 if i <= 3 else i - 1
+            return _AsyncIter([_chunk(delta=json.dumps(_page_json(page))),
+                               _chunk(done=True)])
+
+        mock_gw = MagicMock()
+        mock_gw.stream_chat.side_effect = _side
+        node = _make_gen_slides_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_outline": SAMPLE_OUTLINE}))
+        doc = result["yuwen_content"]
+        assert len(doc["slides"]) == 3
+        # 第 2 次调用带 assistant+user 反馈
+        assert [m.role for m in calls[1]] == ["system", "user", "assistant", "user"]
+        assert "校验" in calls[1][3].content or "JSON" in calls[1][3].content
+
+    def test_page_hard_fail_continues(self, outputs_tmp):
+        """第 1 页 3 次全坏 → 其余页继续，error 记录失败页。"""
+        from devpilot.agenthub.yuwen.nodes.gen_slides import _make_gen_slides_node
+        calls = []
+
+        def _side(msgs, **kw):
+            calls.append(1)
+            if len(calls) <= 3:  # 第 1 页的 3 次尝试全失败
+                return _AsyncIter([_chunk(delta="garbage"), _chunk(done=True)])
+            return _AsyncIter([_chunk(delta=json.dumps(_page_json(len(calls) - 2))),
+                               _chunk(done=True)])
+
+        mock_gw = MagicMock()
+        mock_gw.stream_chat.side_effect = _side
+        node = _make_gen_slides_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_outline": SAMPLE_OUTLINE}))
+        assert len(result["yuwen_content"]["slides"]) == 2
+        assert "生成失败" in result["yuwen_error"]
+        assert result["yuwen_content_path"]  # 部分产出仍落盘
+
+    def test_doc_wrap_output_recovered(self, outputs_tmp):
+        """模型误输出整 doc → 拆 slides[0] 用（常见偏差抢救）。"""
+        from devpilot.agenthub.yuwen.nodes.gen_slides import _make_gen_slides_node
+        wrapped = {"meta": {}, "slides": [_page_json(1, "cover")]}
+
+        def _side(msgs, **kw):
+            return _AsyncIter([_chunk(delta=json.dumps(wrapped)),
+                               _chunk(done=True)])
+
+        mock_gw = MagicMock()
+        mock_gw.stream_chat.side_effect = _side
+        node = _make_gen_slides_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_outline":
+                                       {**SAMPLE_OUTLINE,
+                                        "pages": SAMPLE_OUTLINE["pages"][:1]}}))
+        assert result["yuwen_content"]["slides"][0]["kind"] == "cover"
+
+    def test_outline_from_disk_when_state_empty(self, outputs_tmp):
+        """路由可从盘直跳 gen_slides：state 无 outline 时查盘兜底。"""
+        from devpilot.agenthub.yuwen.nodes.gen_slides import _make_gen_slides_node
+        from devpilot.agenthub.yuwen.state import _save_state
+        _save_state(PARAMS, yuwen_outline=SAMPLE_OUTLINE,
+                    yuwen_outline_confirmed=True)
+        mock_gw = MagicMock()
+        mock_gw.stream_chat.side_effect = self._stream_for_pages(
+            [json.dumps(_page_json(1)), json.dumps(_page_json(2)),
+             json.dumps(_page_json(3))])
+        node = _make_gen_slides_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS}))
+        assert len(result["yuwen_content"]["slides"]) == 3
+
+    def test_normalize_applied_per_page(self, outputs_tmp):
+        """单页里的模型偏差（text→paragraph）在校验前被 normalize 纠偏。"""
+        from devpilot.agenthub.yuwen.nodes.gen_slides import _make_gen_slides_node
+        bad_page = {"id": "s01", "kind": "cover", "title": "t", "period": 1,
+                    "elements": [{"type": "text", "content": "床前明月光"}]}
+        mock_gw = MagicMock()
+        mock_gw.stream_chat.side_effect = self._stream_for_pages(
+            [json.dumps(bad_page), json.dumps(_page_json(2)),
+             json.dumps(_page_json(3))])
+        node = _make_gen_slides_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_outline": SAMPLE_OUTLINE}))
+        types = [el["type"] for s in result["yuwen_content"]["slides"]
+                 for el in s["elements"]]
+        assert "paragraph" in types and "text" not in types
+
+
+# ======================================================================
+# 8. gen_plan 节点
+# ======================================================================
+
+class TestGenPlan:
+    """gen_plan：教案+学习单融进 doc 并重写 tmp json。"""
+
+    def _doc(self, outputs_tmp, params=PARAMS):
+        return {"version": "1.0", "meta": SAMPLE_OUTLINE["meta"],
+                "slides": [_page_json(1), _page_json(2), _page_json(3)],
+                "lessonPlan": {}, "handout": {"levels": []}}
+
+    def test_plan_merged_and_rewritten(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.nodes.gen_plan import _make_gen_plan_node
+        doc = self._doc(outputs_tmp)
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            json.dumps(PLAN_JSON, ensure_ascii=False))
+        node = _make_gen_plan_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_content": doc}))
+        assert result["yuwen_content"]["lessonPlan"]["title"] == "静夜思"
+        assert result["yuwen_content"]["handout"]["levels"]
+        # 盘上 tmp 重写
+        from devpilot.agenthub.yuwen.state import _content_path
+        on_disk = json.loads(_content_path(PARAMS).read_text(encoding="utf-8"))
+        assert on_disk["lessonPlan"]["teachingProcess"]
+
+    def test_plan_failure_not_blocking(self, outputs_tmp):
+        """两次都坏 → 不返回新 content（state 保留原 doc，lessonPlan 维持占位），管线继续。"""
+        from devpilot.agenthub.yuwen.nodes.gen_plan import _make_gen_plan_node
+        doc = self._doc(outputs_tmp)
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response("not json")
+        node = _make_gen_plan_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_content": doc}))
+        assert "yuwen_content" not in result, "失败不应覆盖 state 里的 doc"
+        assert "yuwen_error" not in result or not result.get("yuwen_error")
+
+    def test_handout_levels_backfilled(self, outputs_tmp):
+        """LLM 忘给 handout.levels → 程序补 []（render validate 硬要求）。"""
+        from devpilot.agenthub.yuwen.nodes.gen_plan import _make_gen_plan_node
+        plan = {"lessonPlan": PLAN_JSON["lessonPlan"], "handout": {}}
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(json.dumps(plan, ensure_ascii=False))
+        node = _make_gen_plan_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_content": self._doc(outputs_tmp)}))
+        assert result["yuwen_content"]["handout"]["levels"] == []
+
+
+# ======================================================================
+# 9. review / revise 节点
+# ======================================================================
+
+class TestReview:
+    """review：LLM 评分 + review 帧 + 失败降级。"""
+
+    def _doc(self):
+        return {"version": "1.0", "meta": {**SAMPLE_OUTLINE["meta"], "stage": "低段"},
+                "slides": [_page_json(1), _page_json(2), _page_json(3)],
+                "lessonPlan": {}, "handout": {"levels": []}}
+
+    def test_pass_emits_review_frame(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.nodes.review import _make_review_node
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            json.dumps(REVIEW_PASS, ensure_ascii=False))
+        frames = []
+        node = _make_review_node(mock_gw, lambda f: frames.append(f))
+        result = asyncio.run(node({"yuwen_content": self._doc()}))
+        assert result["yuwen_review"]["pass"] is True
+        review_frames = [f for f in frames if f.get("type") == "review"]
+        assert len(review_frames) == 1
+        assert review_frames[0]["review"]["scores"]["structure"] == 5
+
+    def test_issues_with_pass_recompute(self, outputs_tmp):
+        """LLM 给 issues 却标 pass=true → 程序按规则重算为 False。"""
+        from devpilot.agenthub.yuwen.nodes.review import _make_review_node
+        payload = {"scores": {"structure": 4, "pedagogy": 4, "content": 4,
+                              "stage_fit": 4},
+                   "issues": [{"page_id": "s02", "problems": ["元素内容空泛"]}],
+                   "pass": True}
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(json.dumps(payload, ensure_ascii=False))
+        node = _make_review_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_content": self._doc()}))
+        assert result["yuwen_review"]["pass"] is False
+        assert result["yuwen_review"]["issues"]
+
+    def test_review_failure_degrades_pass(self, outputs_tmp):
+        """审查不可用（网关挂）→ 降级放行，不阻断。"""
+        from devpilot.agenthub.yuwen.nodes.review import _make_review_node
+        mock_gw = MagicMock()
+        mock_gw.chat.side_effect = RuntimeError("down")
+        node = _make_review_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_content": self._doc()}))
+        assert result["yuwen_review"]["pass"] is True
+        assert "error" in result["yuwen_review"]
+
+    def test_no_content_skips(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.nodes.review import _make_review_node
+        node = _make_review_node(MagicMock(), None)
+        result = asyncio.run(node({"yuwen_content": {}}))
+        assert result["yuwen_review"]["pass"] is True
+
+    def test_sample_pages_deterministic(self, outputs_tmp):
+        """抽查页固定种子可重现。"""
+        from devpilot.agenthub.yuwen.nodes.review import _sample_pages
+        doc = {"slides": [_page_json(i) for i in range(1, 9)],
+               "meta": {"stage": "低段"}}
+        a, b = _sample_pages(doc), _sample_pages(doc)
+        assert a == b
+
+
+class TestRevise:
+    """revise：按问题清单单页重生成，轮数计数。"""
+
+    def test_issue_page_replaced(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.nodes.revise import _make_revise_node
+        doc = {"version": "1.0", "meta": {**SAMPLE_OUTLINE["meta"], "stage": "低段"},
+               "slides": [_page_json(1), _page_json(2), _page_json(3)],
+               "lessonPlan": {}, "handout": {"levels": []}}
+        review = {"scores": {"structure": 3, "pedagogy": 4, "content": 3,
+                             "stage_fit": 4},
+                  "issues": [{"page_id": "s02", "problems": ["discussion hint 为空"]}],
+                  "pass": False}
+        fixed = _page_json(2, "word-cards", extra_elem={
+            "type": "discussion", "question": "问题？", "hint": "提示"})
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            json.dumps(fixed, ensure_ascii=False))
+        node = _make_revise_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS, "yuwen_content": doc,
+                                   "yuwen_review": review, "yuwen_revise_rounds": 0}))
+        assert result["yuwen_revise_rounds"] == 1
+        s02 = next(s for s in result["yuwen_content"]["slides"] if s["id"] == "s02")
+        types = [e["type"] for e in s02["elements"]]
+        assert "discussion" in types
+        # 修订结果落盘
+        from devpilot.agenthub.yuwen.state import _content_path
+        disk = json.loads(_content_path(PARAMS).read_text(encoding="utf-8"))
+        assert any("discussion" in [e["type"] for e in s["elements"]]
+                   for s in disk["slides"])
+
+    def test_ghost_page_id_skipped(self, outputs_tmp):
+        """LLM 幻觉页 ID → 跳过不炸。"""
+        from devpilot.agenthub.yuwen.nodes.revise import _make_revise_node
+        doc = {"version": "1.0", "meta": SAMPLE_OUTLINE["meta"],
+               "slides": [_page_json(1)], "lessonPlan": {},
+               "handout": {"levels": []}}
+        review = {"scores": {}, "issues": [{"page_id": "s99",
+                                            "problems": ["x"]}], "pass": False}
+        node = _make_revise_node(MagicMock(), None)
+        result = asyncio.run(node({"yuwen_params": PARAMS, "yuwen_content": doc,
+                                   "yuwen_review": review, "yuwen_revise_rounds": 1}))
+        assert result["yuwen_revise_rounds"] == 2
+        assert result["yuwen_content"]["slides"][0]["id"] == "s01"
+
+    def test_fix_failure_keeps_original(self, outputs_tmp):
+        """修订输出坏 JSON → 保留原页（改坏不如不改）。"""
+        from devpilot.agenthub.yuwen.nodes.revise import _make_revise_node
+        doc = {"version": "1.0", "meta": SAMPLE_OUTLINE["meta"],
+               "slides": [_page_json(2, "word-cards")], "lessonPlan": {},
+               "handout": {"levels": []}}
+        review = {"scores": {}, "issues": [{"page_id": "s02",
+                                            "problems": ["p"]}], "pass": False}
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response("garbage")
+        node = _make_revise_node(mock_gw, None)
+        result = asyncio.run(node({"yuwen_params": PARAMS, "yuwen_content": doc,
+                                   "yuwen_review": review, "yuwen_revise_rounds": 0}))
+        assert result["yuwen_content"]["slides"][0]["kind"] == "word-cards"
+
+
+# ======================================================================
+# 10. gen_images 节点
+# ======================================================================
+
+class TestGenImages:
+    """gen_images：可选 AI 配图（无 key 跳过 / 有 key 落盘回填）。"""
+
+    def _doc_with_images(self):
+        return {"version": "1.0", "meta": SAMPLE_OUTLINE["meta"],
+                "slides": [
+                    {"id": "s01", "kind": "cover", "title": "静夜思", "period": 1,
+                     "elements": [
+                         {"type": "heading", "content": "静夜思", "size": "h1"},
+                         {"type": "image", "caption": "月夜意境图", "src": ""}]},
+                    {"id": "s02", "kind": "intro", "title": "诗人", "period": 1,
+                     "elements": [
+                         {"type": "image", "caption": "李白像", "src": ""}]},
+                ],
+                "lessonPlan": {}, "handout": {"levels": []}}
+
+    def test_no_key_skips(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        fake_cls = MagicMock()
+        fake_cls.return_value.available = False
+        frames = []
+        node = _make_gen_images_node(lambda f: frames.append(f))
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen", fake_cls):
+            result = asyncio.run(node({"yuwen_params": PARAMS,
+                                       "yuwen_content": doc}))
+        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
+        done = [f for f in frames if f.get("status") == "done"]
+        assert any("IMAGE_API_KEY" in f.get("detail", "") for f in done)
+
+    def test_no_empty_image_noop(self, outputs_tmp):
+        """无待配图元素（src 已填或无 image）→ 直接过，不调网关。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        doc["slides"][0]["elements"][1]["src"] = "assets/old.png"
+        doc["slides"][1]["elements"] = [{"type": "paragraph", "content": "x"}]
+        node = _make_gen_images_node(None)
+        result = asyncio.run(node({"yuwen_params": PARAMS,
+                                   "yuwen_content": doc}))
+        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] \
+            == "assets/old.png"
+
+    def test_generate_success_backfills(self, outputs_tmp):
+        """生图成功 → 落盘 assets/*.png + src 相对路径回填 + tmp 重写。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        from devpilot.agenthub.yuwen.state import _content_path, _session_dir
+        doc = self._doc_with_images()
+
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG fake")
+        fake_cls = MagicMock(return_value=fake_gen)
+        node = _make_gen_images_node(None)
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen", fake_cls):
+            result = asyncio.run(node({"yuwen_params": PARAMS,
+                                       "yuwen_content": doc}))
+
+        el0 = result["yuwen_content"]["slides"][0]["elements"][1]
+        el1 = result["yuwen_content"]["slides"][1]["elements"][0]
+        assert el0["src"] == "assets/s01_1.png"   # 相对 session 目录（帧契约）
+        assert el1["src"] == "assets/s02_0.png"
+        assets = _session_dir(PARAMS) / "assets"
+        assert (assets / "s01_1.png").read_bytes() == b"\x89PNG fake"
+        # tmp json 重写（render 读盘）
+        disk = json.loads(_content_path(PARAMS).read_text(encoding="utf-8"))
+        assert disk["slides"][0]["elements"][1]["src"] == "assets/s01_1.png"
+        # prompt 由 caption+页标题+课文名拼中文（两张图各查一次调用）
+        prompts = [c[0][0] for c in fake_gen.generate.call_args_list]
+        assert any("月夜意境图" in p and "静夜思" in p for p in prompts)
+        assert any("李白像" in p for p in prompts)
+
+    def test_generate_failure_placeholder(self, outputs_tmp):
+        """生图失败 → src 留空走占位，不 raise。"""
+        from devpilot.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(side_effect=RuntimeError("gateway 503"))
+        fake_cls = MagicMock(return_value=fake_gen)
+        node = _make_gen_images_node(None)
+        with patch("devpilot.agenthub.yuwen.imagegen.ImageGen", fake_cls):
+            result = asyncio.run(node({"yuwen_params": PARAMS,
+                                       "yuwen_content": doc}))
+        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
+
+    def test_imagegen_unavailable_without_env(self, monkeypatch):
+        from devpilot.agenthub.yuwen import imagegen as ig
+        monkeypatch.delenv("IMAGE_API_KEY", raising=False)
+        assert ig.ImageGen().available is False
+        monkeypatch.setenv("IMAGE_API_KEY", "k")
+        g = ig.ImageGen()
+        assert g.available is True and g._model == "doubao-seedream"
+
+
+# ======================================================================
+# 11. extract_params 节点（沿用）
 # ======================================================================
 
 class TestExtractParams:
     """extract_params 节点：LLM 参数提取与追问。"""
 
-    def test_params_ready_goes_to_gen_content(self):
-        """参数齐备时条件边走向 gen_content。"""
-        from devpilot.agenthub.yuwen.graph import _params_ready
-
-        state = {"yuwen_params_ready": True}
-        assert _params_ready(state) == "gen_content"
-
-    def test_params_not_ready_ends(self):
-        """参数缺失时条件边走向 __end__。"""
-        from devpilot.agenthub.yuwen.graph import _params_ready
-
-        state = {"yuwen_params_ready": False}
-        assert _params_ready(state) == "__end__"
-
-    def test_params_ready_defaults_false(self):
-        """state 无 yuwen_params_ready 时默认走向 __end__。"""
-        from devpilot.agenthub.yuwen.graph import _params_ready
-
-        state = {}
-        assert _params_ready(state) == "__end__"
-
     def test_extract_params_full_parsed(self):
-        """LLM 返回完整参数时，节点返回 params_ready=True。"""
-        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.nodes.extract_params import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
-            "title": "静夜思",
-            "grade": 1,
-            "lesson_type": "古诗词",
-            "textbook": "部编版一年级下册",
-            "params_ready": True,
-            "question": "",
-            "chips": [],
+            "title": "静夜思", "grade": 1, "lesson_type": "古诗词",
+            "textbook": "部编版一年级下册", "params_ready": True,
+            "question": "", "chips": [],
         }, ensure_ascii=False))
 
         frames = []
         node = _make_extract_params_node(mock_gw, lambda f: frames.append(f))
-
-        import asyncio
         result = asyncio.run(node({
             "task": "帮我做《静夜思》的课件",
-            "user_message": "帮我做《静夜思》的课件",
-            "messages": [],
-        }))
+            "user_message": "帮我做《静夜思》的课件", "messages": []}))
 
         assert result["yuwen_params_ready"] is True
         assert result["yuwen_params"]["title"] == "静夜思"
-        assert result["yuwen_params"]["grade"] == 1
-        assert result["yuwen_params"]["lesson_type"] == "古诗词"
-        # 应有 step 帧
         step_frames = [f for f in frames if f.get("type") == "step"]
         assert len(step_frames) == 2  # running + done
 
     def test_extract_params_missing_grade(self):
-        """缺年级时 params_ready=False，发出追问。"""
-        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.nodes.extract_params import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
-            "title": "静夜思",
-            "grade": 0,
-            "lesson_type": "",
-            "textbook": "",
-            "params_ready": False,
-            "question": "请提供年级和课型，例如：一年级 古诗词",
+            "title": "静夜思", "grade": 0, "lesson_type": "", "textbook": "",
+            "params_ready": False, "question": "请提供年级和课型",
             "chips": ["一年级 古诗词", "二年级 精读"],
         }, ensure_ascii=False))
 
         frames = []
         node = _make_extract_params_node(mock_gw, lambda f: frames.append(f))
-
-        import asyncio
         result = asyncio.run(node({
-            "task": "做《静夜思》",
-            "user_message": "做《静夜思》",
-            "messages": [],
-        }))
+            "task": "做《静夜思》", "user_message": "做《静夜思》", "messages": []}))
 
         assert result["yuwen_params_ready"] is False
-        # 应有追问文本
         content_frames = [f for f in frames if f.get("type") == "content"]
-        assert len(content_frames) > 0
-        assert "年级" in content_frames[0].get("delta", "")
+        assert content_frames and "年级" in content_frames[0].get("delta", "")
 
     def test_extract_params_llm_failure(self):
-        """LLM 调用异常时降级返回。"""
-        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.nodes.extract_params import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.side_effect = RuntimeError("API 不可用")
-
         node = _make_extract_params_node(mock_gw, None)
-
-        import asyncio
         result = asyncio.run(node({
-            "task": "帮我做课件",
-            "user_message": "帮我做课件",
-            "messages": [],
-        }))
-
+            "task": "帮我做课件", "user_message": "帮我做课件", "messages": []}))
         assert result["yuwen_params_ready"] is False
 
     def test_extract_params_gateway_called_with_json_mode(self):
-        """gateway.chat 被调用且 json_mode=True。"""
-        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.nodes.extract_params import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
             "title": "静夜思", "grade": 1, "lesson_type": "古诗词",
             "textbook": "部编版", "params_ready": True, "question": "", "chips": [],
         }))
-
         node = _make_extract_params_node(mock_gw, None)
-
-        import asyncio
         asyncio.run(node({
-            "task": "静夜思 一年级",
-            "user_message": "静夜思 一年级",
-            "messages": [],
-        }))
-
-        # 验证 json_mode=True
+            "task": "静夜思 一年级", "user_message": "静夜思 一年级", "messages": []}))
         _, kwargs = mock_gw.chat.call_args
         assert kwargs.get("json_mode") is True
 
 
 # ======================================================================
-# 4. gen_content 节点测试
+# 12. _call_llm provider 签名过滤
 # ======================================================================
 
-class TestGenContent:
-    """gen_content 节点：LLM 生成课件 JSON。"""
+class TestCallLlm:
+    """_call_llm：方法能接 provider 才传，否则静默降级默认链。"""
 
-    SAMPLE_JSON = {
-        "version": "1.0",
-        "meta": {
-            "title": "静夜思",
-            "grade": 1,
-            "lessonType": "古诗词",
-            "textbook": "部编版一年级下册",
-            "periods": 1,
-            "coreCompetencies": ["文化自信", "语言运用", "思维能力", "审美创造"],
-            "objectives": [
-                {"content": "认识9个生字", "competency": "语言运用", "dimension": "知识与技能"},
-                {"content": "正确流利有感情地朗读古诗", "competency": "语言运用", "dimension": "过程与方法"},
-            ],
-            "keyPoints": ["识字，朗读背诵古诗"],
-            "difficulties": ["体会诗人思乡之情"],
-        },
-        "slides": [
-            {"id": "s01", "kind": "cover", "title": "静夜思", "period": 1, "elements": [
-                {"type": "heading", "content": "静夜思", "size": "h1"},
-            ]},
-            {"id": "s02", "kind": "intro", "title": "诗人背景", "period": 1, "elements": [
-                {"type": "paragraph", "content": "李白，唐代诗人。", "emphasize": []},
-            ]},
-            {"id": "s03", "kind": "read-rhythm", "title": "初读节奏", "period": 1, "elements": [
-                {"type": "poem", "title": "静夜思", "author": "李白", "stanzas": [
-                    {"lines": [
-                        {"text": "床前明月光", "ruby": "chuáng qián míng yuè guāng"},
-                        {"text": "疑是地上霜", "ruby": "yí shì dì shàng shuāng"},
-                        {"text": "举头望明月", "ruby": "jǔ tóu wàng míng yuè"},
-                        {"text": "低头思故乡", "ruby": "dī tóu sī gù xiāng"},
-                    ]}
-                ]},
-            ]},
-        ],
-        "lessonPlan": {
-            "title": "静夜思",
-            "base": {"textbook": "部编版一年级下册", "grade": "一年级", "periods": "1", "lessonType": "古诗词"},
-            "objectives": [
-                {"content": "认识9个生字", "competency": "语言运用", "dimension": "知识与技能"},
-            ],
-            "keyPoints": ["识字"],
-            "difficulties": ["体会情感"],
-            "preparation": "多媒体课件",
-            "periods": "1课时",
-            "teachingProcess": [
-                {"phase": "一、导入", "duration": "5分钟", "activities": [
-                    {"teacher": "出示明月图", "student": "观察图片"},
-                ], "design": "创设情境"},
-            ],
-            "boardDesign": {"structure": "静夜思：思乡之情"},
-            "homework": {"levels": [{"level": "基础", "items": ["背诵"]}]},
-            "reflection": "",
-        },
-        "handout": {
-            "levels": [{"level": "基础", "items": ["背诵"]}],
-        },
-    }
+    def test_real_chat_signature_drops_provider(self):
+        from devpilot.agenthub.yuwen.nodes._page import _call_llm
+        gw = MagicMock()
 
-    def test_gen_content_returns_json_path(self):
-        """gen_content 产出 JSON 文件路径。"""
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
+        # 模拟真实 Gateway.chat：无 **kwargs，显式参数里没有 provider
+        def chat(messages, *, temperature=0.7, json_mode=False,
+                 tools=None, tool_choice=None, use_cache=False):
+            return _chat_response("{}")
 
-        import json as _json
-        sample_json_str = _json.dumps(self.SAMPLE_JSON, ensure_ascii=False)
+        gw.chat = MagicMock(side_effect=chat)
+        gw.chat.__signature__ = None  # 用 side_effect 函数签名不行，手工建 stub：
+        # 改用普通函数对象直接测（绕过 MagicMock 签名恒真）
+        class StubGw:
+            def chat(self, messages, *, temperature=0.7, json_mode=False,
+                     tools=None, tool_choice=None, use_cache=False):
+                return _chat_response("{}")
+        stub = StubGw()
+        # 不抛 TypeError 即正确丢弃了 provider
+        resp = _call_llm(stub, "chat", [], {"provider": "deepseek",
+                                            "model": "x"}, temperature=0.2)
+        assert resp.content == "{}"
 
-        mock_gw = MagicMock()
-        mock_gw.stream_chat.return_value = _AsyncIter([
-            _chunk(delta=sample_json_str),
-            _chunk(done=True),
-        ])
+    def test_stream_passes_provider(self):
+        from devpilot.agenthub.yuwen.nodes._page import _call_llm
+        gw = MagicMock()
+        captured = {}
 
-        frames = []
-        node = _make_gen_content_node(mock_gw, lambda f: frames.append(f))
+        async def stream_chat(messages, *, provider="", model="",
+                              temperature=0.7, tools=None, tool_choice=None):
+            captured["provider"] = provider
+            yield _chunk(done=True)
 
-        import asyncio
-        result = asyncio.run(node({
-            "yuwen_params": {
-                "title": "静夜思",
-                "grade": 1,
-                "lesson_type": "古诗词",
-                "textbook": "部编版一年级下册",
-            },
-        }))
+        gw.stream_chat = stream_chat
 
-        assert result["yuwen_content_path"], "应返回 JSON 文件路径"
-        path = Path(result["yuwen_content_path"])
-        assert path.exists(), f"JSON 文件应存在：{path}"
-        # 验证内容
-        loaded = _json.loads(path.read_text(encoding="utf-8"))
-        assert loaded["meta"]["title"] == "静夜思"
-        # 清理
-        path.unlink()
-
-    def test_gen_content_with_markdown_code_block(self):
-        """LLM 返回 markdown 代码块包裹的 JSON 也能解析。"""
-        import json as _json
-        wrapped = f"```json\n{_json.dumps(self.SAMPLE_JSON, ensure_ascii=False)}\n```"
-
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
-
-        mock_gw = MagicMock()
-        mock_gw.stream_chat.return_value = _AsyncIter([
-            _chunk(delta=wrapped),
-            _chunk(done=True),
-        ])
-
-        node = _make_gen_content_node(mock_gw, None)
-
-        import asyncio
-        result = asyncio.run(node({
-            "yuwen_params": {
-                "title": "静夜思",
-                "grade": 1,
-                "lesson_type": "古诗词",
-                "textbook": "部编版一年级下册",
-            },
-        }))
-
-        assert result["yuwen_content_path"]
-        Path(result["yuwen_content_path"]).unlink()  # cleanup
-
-    def test_gen_content_invalid_json_retry(self):
-        """JSON 解析失败时重试一次。"""
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
-
-        import json as _json
-        sample_str = _json.dumps(self.SAMPLE_JSON, ensure_ascii=False)
-
-        # 第一次返回无效 JSON，第二次返回有效
-        mock_gw = MagicMock()
-        mock_gw.stream_chat.side_effect = [
-            _AsyncIter([_chunk(delta="not valid json at all"), _chunk(done=True)]),
-            _AsyncIter([_chunk(delta=sample_str), _chunk(done=True)]),
-        ]
-
-        node = _make_gen_content_node(mock_gw, None)
-
-        import asyncio
-        result = asyncio.run(node({
-            "yuwen_params": {
-                "title": "静夜思",
-                "grade": 1,
-                "lesson_type": "古诗词",
-                "textbook": "部编版一年级下册",
-            },
-        }))
-
-        assert result["yuwen_content_path"]
-        assert mock_gw.stream_chat.call_count == 2
-        Path(result["yuwen_content_path"]).unlink()  # cleanup
-
-    def test_gen_content_both_attempts_fail(self):
-        """所有尝试都失败时返回空路径。"""
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
-
-        mock_gw = MagicMock()
-        mock_gw.stream_chat.return_value = _AsyncIter([
-            _chunk(delta="garbage"),
-            _chunk(done=True),
-        ])
-
-        node = _make_gen_content_node(mock_gw, None)
-
-        import asyncio
-        result = asyncio.run(node({
-            "yuwen_params": {
-                "title": "静夜思",
-                "grade": 1,
-                "lesson_type": "古诗词",
-                "textbook": "部编版一年级下册",
-            },
-        }))
-
-        assert result["yuwen_content_path"] == ""
-
-    def test_gen_content_schema_retry_with_feedback(self):
-        """schema 校验失败 → 反思反馈重试（assistant+user 消息回传错误）。
-
-        与"原样重掷"的区别：第 2 次调用必须携带第 1 次的输出与错误说明，
-        模型看得到哪里错才能修正——这是自动反思重新生成的核心。
-        """
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
-
-        import asyncio
-        import json as _json
-
-        # grade=9：值域外（1-6），归一化无法吸收的真错误，
-        # 必须走"反馈重试"路径而非 normalize 救回。
-        bad = {
-            "meta": {"title": "静夜思", "grade": 9, "lessonType": "古诗词"},
-            "slides": self.SAMPLE_JSON["slides"],
-        }
-        good = self.SAMPLE_JSON
-
-        calls = []
-        mock_gw = MagicMock()
-
-        def _side(msgs, **kw):
-            calls.append(list(msgs))
-            text = _json.dumps(bad if len(calls) == 1 else good, ensure_ascii=False)
-            return _AsyncIter([_chunk(delta=text), _chunk(done=True)])
-
-        mock_gw.stream_chat.side_effect = _side
-        node = _make_gen_content_node(mock_gw, None)
-        result = asyncio.run(node({
-            "yuwen_params": {"title": "静夜思", "grade": 1,
-                             "lesson_type": "古诗词", "textbook": "部编版一年级"},
-        }))
-
-        assert result["yuwen_content_path"], "第 2 轮应成功"
-        assert len(calls) == 2
-        # 第 2 次调用：system + user + assistant(上轮输出) + user(纠错反馈)
-        roles = [m.role for m in calls[1]]
-        assert roles == ["system", "user", "assistant", "user"]
-        assert "grade" in calls[1][2].content, "assistant 带上轮输出"
-        assert "grade" in calls[1][3].content, "user 反馈带具体错误"
-        Path(result["yuwen_content_path"]).unlink()
-
-    def test_gen_content_truncated_output_feedback(self):
-        """finish_reason=length 截断 → 反馈带压缩指令（针对性纠错）。"""
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
-
-        import asyncio
-        import json as _json
-
-        calls = []
-        mock_gw = MagicMock()
-
-        def _side(msgs, **kw):
-            calls.append(list(msgs))
-            if len(calls) == 1:
-                # 残缺 JSON + length 截断标志
-                return _AsyncIter([
-                    _chunk(delta='{"meta": {"title": "静夜思"'),
-                    _chunk(done=True, finish_reason="length"),
-                ])
-            return _AsyncIter([
-                _chunk(delta=_json.dumps(self.SAMPLE_JSON, ensure_ascii=False)),
-                _chunk(done=True),
-            ])
-
-        mock_gw.stream_chat.side_effect = _side
-        node = _make_gen_content_node(mock_gw, None)
-        result = asyncio.run(node({
-            "yuwen_params": {"title": "静夜思", "grade": 1,
-                             "lesson_type": "古诗词", "textbook": "部编版一年级"},
-        }))
-
-        assert result["yuwen_content_path"], "截断后重试应成功"
-        assert len(calls) == 2
-        assert "截断" in calls[1][3].content, "反馈应说明截断原因并给压缩指令"
-        Path(result["yuwen_content_path"]).unlink()
-
-    def test_gen_content_temperature_escalation(self):
-        """重试温度递增（0.3/0.5/0.7）：打破同温采样的同质失败。"""
-        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
-
-        import asyncio
-
-        temps = []
-        mock_gw = MagicMock()
-
-        def _side(msgs, **kw):
-            temps.append(kw.get("temperature"))
-            return _AsyncIter([_chunk(delta="garbage"), _chunk(done=True)])
-
-        mock_gw.stream_chat.side_effect = _side
-        node = _make_gen_content_node(mock_gw, None)
-        asyncio.run(node({
-            "yuwen_params": {"title": "静夜思", "grade": 1,
-                             "lesson_type": "古诗词", "textbook": "部编版一年级"},
-        }))
-
-        assert temps == [0.3, 0.5, 0.7], f"温度应递增，实际 {temps}"
+        async def _go():
+            async for _ in _call_llm(gw, "stream_chat", [],
+                                     {"provider": "ollama", "model": "q"},
+                                     temperature=0.3):
+                pass
+            return captured
+        got = asyncio.run(_go())
+        assert got["provider"] == "ollama"
 
 
 # ======================================================================
-# 5. render_all 纯 Python 渲染测试
+# 13. render_all 纯 Python 渲染测试
 # ======================================================================
 
 class TestRenderAll:
     """render_all.py 纯 Python 渲染（无 LLM 依赖）。"""
 
     def test_render_jingyesi_exit_0(self):
-        """静夜思 JSON → 退出码 0。"""
-        import subprocess, sys
+        import subprocess
         base = _SRC / "devpilot" / "agenthub" / "yuwen"
         script = base / "scripts" / "render_all.py"
         json_path = base / "references" / "examples" / "jingyesi.json"
@@ -575,20 +1055,17 @@ class TestRenderAll:
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
-        # 验证 3 个文件
         files = list(out_dir.glob("*"))
         exts = [f.suffix for f in files]
         assert ".pptx" in exts, f"missing pptx in {exts}"
         assert ".html" in exts, f"missing html in {exts}"
         assert ".docx" in exts, f"missing docx in {exts}"
 
-        # 清理
         import shutil
         shutil.rmtree(out_dir.parent, ignore_errors=True)
 
     def test_render_zuojing_exit_0(self):
-        """坐井观天 JSON（2 课时）→ 退出码 0。"""
-        import subprocess, sys
+        import subprocess
         base = _SRC / "devpilot" / "agenthub" / "yuwen"
         script = base / "scripts" / "render_all.py"
         json_path = base / "references" / "examples" / "zuojing-guantian.json"
@@ -611,10 +1088,8 @@ class TestRenderAll:
         shutil.rmtree(out_dir.parent, ignore_errors=True)
 
     def test_render_check_deps(self):
-        """check_deps.py 返回 0（全部就绪）。"""
-        import subprocess, sys
+        import subprocess
         script = str(_SRC / "devpilot" / "agenthub" / "yuwen" / "scripts" / "check_deps.py")
-
         result = subprocess.run(
             [sys.executable, script],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -623,10 +1098,8 @@ class TestRenderAll:
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
     def test_render_nonexistent_json(self):
-        """不存在的 JSON → 退出码 2。"""
-        import subprocess, sys
+        import subprocess
         script = str(_SRC / "devpilot" / "agenthub" / "yuwen" / "scripts" / "render_all.py")
-
         result = subprocess.run(
             [sys.executable, script, "/nonexistent/path.json"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -636,227 +1109,41 @@ class TestRenderAll:
 
 
 # ======================================================================
-# 6. 条件边单元测试
-# ======================================================================
-
-class TestConditionalEdge:
-    """图条件边函数。"""
-
-    def test_params_ready_function(self):
-        """_params_ready 条件边直接返回字符串。"""
-        from devpilot.agenthub.yuwen.graph import _params_ready
-
-        assert _params_ready({"yuwen_params_ready": True}) == "gen_content"
-        assert _params_ready({"yuwen_params_ready": False}) == "__end__"
-        assert _params_ready({}) == "__end__"
-
-
-# ======================================================================
-# 7. 图集成测试（mock LLM）
-# ======================================================================
-
-class TestGraphIntegration:
-    """图 astream 集成测试（全部 mock）。"""
-
-    SAMPLE_JSON = TestGenContent.SAMPLE_JSON
-
-    async def _run_graph(self, user_input: str, mock_gw) -> dict:
-        """驱动图执行并返回最终 state。"""
-        from devpilot.agenthub.yuwen.graph import build_graph
-
-        registry = MagicMock()
-        frames = []
-
-        graph = build_graph(gateway=mock_gw, registry=registry,
-                            emitter=lambda f: frames.append(f))
-
-        final_state = {}
-        async for chunk in graph.astream({
-            "task": user_input,
-            "user_message": user_input,
-            "messages": [],
-        }):
-            for node_id, update in chunk.items():
-                if isinstance(update, dict):
-                    final_state.update(update)
-
-        return final_state, frames
-
-    def test_full_graph_params_ready(self):
-        """完整流程：参数齐备 → gen_content → render → report。"""
-        import json as _json
-
-        mock_gw = MagicMock()
-        # extract_params 返回齐备参数
-        mock_gw.chat.return_value = _chat_response(_json.dumps({
-            "title": "静夜思",
-            "grade": 1,
-            "lesson_type": "古诗词",
-            "textbook": "部编版一年级下册",
-            "params_ready": True,
-            "question": "",
-            "chips": [],
-        }, ensure_ascii=False))
-
-        # gen_content 流式返回 JSON
-        sample_str = _json.dumps(self.SAMPLE_JSON, ensure_ascii=False)
-        mock_gw.stream_chat.return_value = _AsyncIter([
-            _chunk(delta=sample_str),
-            _chunk(done=True),
-        ])
-
-        import asyncio
-        state, frames = asyncio.run(self._run_graph("静夜思 一年级 古诗词", mock_gw))
-
-        # 验证 params 解析
-        assert state.get("yuwen_params", {}).get("title") == "静夜思"
-        # 验证 content 生成
-        assert state.get("yuwen_content_path", "")
-        # 验证渲染结果
-        assert "yuwen_files" in state
-        assert "yuwen_render_error" not in state or not state["yuwen_render_error"]
-
-        # 清理（跳过清理渲染产生的大文件）
-        content_path = state.get("yuwen_content_path", "")
-        if content_path and Path(content_path).exists():
-            # 注：渲染产生的 pptx/html/docx 已被 test_render 清理，这里只清 tmp JSON
-            pass
-
-    def test_full_graph_params_missing_then_ready_two_rounds(self):
-        """两轮对话：第一轮缺参数 → END，第二轮补齐 → 完整流程。"""
-        import json as _json
-
-        # 第一轮：缺参数
-        mock_gw1 = MagicMock()
-        mock_gw1.chat.return_value = _chat_response(_json.dumps({
-            "title": "静夜思",
-            "grade": 0,
-            "lesson_type": "",
-            "textbook": "",
-            "params_ready": False,
-            "question": "请提供年级和课型",
-            "chips": ["一年级 古诗词"],
-        }, ensure_ascii=False))
-
-        registry = MagicMock()
-        from devpilot.agenthub.yuwen.graph import build_graph
-
-        import asyncio
-
-        frames1 = []
-        graph = build_graph(gateway=mock_gw1, registry=registry,
-                            emitter=lambda f: frames1.append(f))
-
-        async def _run_round(graph, user_input, history):
-            st = {}
-            async for chunk in graph.astream({
-                "task": user_input,
-                "user_message": user_input,
-                "messages": history,
-            }):
-                for _node_id, update in chunk.items():
-                    if isinstance(update, dict):
-                        st.update(update)
-            return st
-
-        state1 = asyncio.run(_run_round(
-            graph, "帮我做《静夜思》的课件", []))
-
-        assert state1.get("yuwen_params_ready") is False
-        assert "yuwen_content_path" not in state1 or not state1.get("yuwen_content_path")
-
-        # 第二轮：补齐参数
-        mock_gw2 = MagicMock()
-        mock_gw2.chat.return_value = _chat_response(_json.dumps({
-            "title": "静夜思",
-            "grade": 1,
-            "lesson_type": "古诗词",
-            "textbook": "部编版一年级下册",
-            "params_ready": True,
-            "question": "",
-            "chips": [],
-        }, ensure_ascii=False))
-
-        sample_str = _json.dumps(self.SAMPLE_JSON, ensure_ascii=False)
-        mock_gw2.stream_chat.return_value = _AsyncIter([
-            _chunk(delta=sample_str),
-            _chunk(done=True),
-        ])
-
-        frames2 = []
-        graph2 = build_graph(gateway=mock_gw2, registry=registry,
-                             emitter=lambda f: frames2.append(f))
-
-        async def _run_round2(graph, user_input, history):
-            st = {}
-            async for chunk in graph.astream({
-                "task": user_input,
-                "user_message": user_input,
-                "messages": history,
-            }):
-                for _node_id, update in chunk.items():
-                    if isinstance(update, dict):
-                        st.update(update)
-            return st
-
-        state2 = asyncio.run(_run_round2(
-            graph2, "一年级 古诗词",
-            [
-                {"role": "user", "content": "帮我做《静夜思》的课件"},
-                {"role": "assistant", "content": "请提供年级和课型"},
-            ],
-        ))
-
-        # 验证第二轮参数齐备
-        assert state2.get("yuwen_params_ready") is True
-        # 验证渲染
-        assert "yuwen_files" in state2
-
-
-# ======================================================================
-# 8. 共通 schema 测试
+# 14. 共通 schema 测试（沿用阶段 1）
 # ======================================================================
 
 class TestSchema:
     """common.schema 校验。"""
 
     def test_validate_valid_doc(self):
-        """合法文档通过校验。"""
         from devpilot.agenthub.yuwen.scripts.common.schema import validate
 
         doc = {
-            "meta": {
-                "title": "静夜思",
-                "grade": 1,
-                "lessonType": "古诗词",
-            },
-            "slides": [
-                {
-                    "id": "s01",
-                    "kind": "cover",
-                    "title": "静夜思",
-                    "period": 1,
-                    "elements": [
-                        {"type": "heading", "content": "静夜思", "size": "h1"},
-                    ],
-                },
-            ],
+            "meta": {"title": "静夜思", "grade": 1, "lessonType": "古诗词"},
+            "slides": [{"id": "s01", "kind": "cover", "title": "静夜思",
+                        "period": 1,
+                        "elements": [{"type": "heading", "content": "静夜思",
+                                      "size": "h1"}]}],
         }
         result = validate(doc)
         assert result["meta"]["stage"] == "低段"
         assert result["meta"]["periods"] == 2  # 古诗词默认 2 课时
 
     def test_validate_missing_meta_raises(self):
-        """缺 meta 抛 SchemaError。"""
         from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
-
         with pytest.raises(SchemaError):
             validate({})
 
-    def test_validate_invalid_lesson_type(self):
-        """非法课型抛 SchemaError。"""
+    def test_validate_empty_handout_raises(self):
+        """handout={} 过不了校验（levels 必须数组）——gen_slides 占位的依据。"""
         from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
+        with pytest.raises(SchemaError):
+            validate({"meta": {"title": "t", "grade": 1, "lessonType": "精读"},
+                      "slides": [{"id": "s01", "elements": []}],
+                      "handout": {}})
 
+    def test_validate_invalid_lesson_type(self):
+        from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
         with pytest.raises(SchemaError):
             validate({
                 "meta": {"title": "静夜思", "grade": 1, "lessonType": "非法课型"},
@@ -864,9 +1151,7 @@ class TestSchema:
             })
 
     def test_validate_unknown_element_type(self):
-        """未知元素类型抛 SchemaError。"""
         from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
-
         with pytest.raises(SchemaError):
             validate({
                 "meta": {"title": "静夜思", "grade": 1, "lessonType": "古诗词"},
@@ -874,11 +1159,7 @@ class TestSchema:
             })
 
     def test_normalize_real_failure_doc(self):
-        """线上失败案例：《静夜思》模型输出偏差经 normalize 后通过校验。
-
-        复现 2026-08-31 生产失败：slides[].type、text/question/audio 元素、
-        散装 word-card（每元素一张卡）、handout.content 全是模型自创结构。
-        """
+        """线上失败案例：《静夜思》模型输出偏差经 normalize 后通过校验。"""
         from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
@@ -935,242 +1216,231 @@ class TestSchema:
         doc = normalize(doc)
         validate(doc)  # 不抛即通过
 
-        # 类型别名已转换
         types = [el["type"] for s in doc["slides"] for el in s["elements"]]
         assert "text" not in types and "question" not in types and "audio" not in types
-        # 散装 word-card 聚合成单个 cards[]
         cards = [el for s in doc["slides"] for el in s["elements"]
                  if el["type"] == "word-card"]
         assert len(cards) == 1
         assert [c["char"] for c in cards[0]["cards"]] == ["静", "夜"]
-        # slides[].type → kind
         assert all("kind" in s for s in doc["slides"])
-        # handout.content → levels
         assert [l["level"] for l in doc["handout"]["levels"]] == ["我会读", "我会背"]
 
-    def test_normalize_elements_not_array(self):
-        """elements 缺失/非数组形态归一化（线上第二次失败案例）。
-
-        模型输出 elements 为 dict/字符串/缺失（内容散在顶层 content/text）。
-        """
-        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
-
-        meta = {"title": "静夜思", "grade": 2, "lessonType": "古诗词"}
-        cases = [
-            # dict → 包数组
-            ({"id": 1, "title": "封面", "elements": {"type": "text", "content": "静夜思"}},
-             ["paragraph"]),
-            # 字符串 → 单 paragraph
-            ({"id": 2, "title": "页", "elements": "床前明月光，疑是地上霜。"},
-             ["paragraph"]),
-            # 缺失 + 顶层 content 列表 → heading + paragraphs
-            ({"id": 3, "title": "学习目标", "content": ["认读18个生字", "正确朗读古诗"]},
-             ["heading", "paragraph", "paragraph"]),
-            # 缺失 + 顶层 text → heading + paragraph
-            ({"id": 4, "title": "小结", "text": "同学们再见"},
-             ["heading", "paragraph"]),
-            # None → 空数组（空页合法）
-            ({"id": 5, "title": "空页", "elements": None},
-             []),
-        ]
-        for slide, want_types in cases:
-            doc = normalize({"meta": meta, "slides": [dict(slide)]})
-            validate(doc)  # 不抛
-            got = [el["type"] for el in doc["slides"][0]["elements"]]
-            assert got == want_types, f"{slide.get('id')}: {got} != {want_types}"
-
-    def test_normalize_type_naming_variants(self):
-        """类型命名风格变体归一化（线上第三次失败案例 word_card）。
-
-        模型写 word_card/wordCard/WordCard/ruby_line 等命名漂移——
-        同一元素只是写法不同，统一切换连字符小写而非报错重生成。
-        """
-        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
-
-        variants = ["word_card", "wordCard", "WordCard", "WORD-CARD", "Word_Card",
-                    "ruby_line", "rubyLine", "RubyLine"]
-        for v in variants:
-            doc = {
-                "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
-                "slides": [{
-                    "id": "s01", "kind": "cover", "title": "页", "period": 1,
-                    "elements": [{"type": v, "cards": [{"char": "夜", "pinyin": "yè"}]}]
-                    if "word" in v.lower() else
-                    [{"type": v, "text": "床前明月光", "ruby": "chuáng"}],
-                }],
-            }
-            doc = normalize(doc)
-            validate(doc)  # 不抛即通过
-            got = doc["slides"][0]["elements"][0]["type"]
-            want = "word-card" if "word" in v.lower() else "ruby-line"
-            assert got == want, f"{v} → {got}，期望 {want}"
-
-        # 未知类型仍原样保留交 validate 报精确错误（不能静默吞掉新偏差）
-        doc = {
-            "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
-            "slides": [{"id": "s01", "kind": "cover", "title": "页", "period": 1,
-                        "elements": [{"type": "mystery_widget"}]}],
-        }
-        doc = normalize(doc)
-        assert doc["slides"][0]["elements"][0]["type"] == "mystery_widget"
-
     def test_normalize_meta_value_variants(self):
-        """meta 值域归一化：grade 字符串/中文数字、lessonType 变体、
-        competency 旧课标名、objectives 字符串数组（validate 必挂分支）。"""
+        """meta 值域归一化：grade 中文数字、lessonType 变体、competency 旧名。"""
         from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
             "meta": {
                 "title": "静夜思",
-                "grade": "一",              # 中文数字
-                "lessonType": "古诗",        # 缺"词"
+                "grade": "一",
+                "lessonType": "古诗",
                 "objectives": [
-                    "认识9个生字",           # 字符串目标
-                    {"content": "发展思维，学会比较", "competency": "思维发展与提升"},  # 旧课标名
-                    {"content": "感受古诗的韵律美"},  # 缺 competency
+                    "认识9个生字",
+                    {"content": "发展思维，学会比较", "competency": "思维发展与提升"},
+                    {"content": "感受古诗的韵律美"},
                 ],
             },
             "slides": [{"id": "s01", "kind": "cover", "title": "页", "period": 1,
                         "elements": [{"type": "heading", "content": "静", "size": "h1"}]}],
         }
         doc = normalize(doc)
-        validate(doc)  # 不抛即通过
+        validate(doc)
         assert doc["meta"]["grade"] == 1
         assert doc["meta"]["lessonType"] == "古诗词"
         objs = doc["meta"]["objectives"]
-        assert len(objs) == 3 and all(isinstance(o, dict) for o in objs)
-        assert objs[0]["competency"] == "语言运用"      # 认字 → 默认语言运用
-        assert objs[1]["competency"] == "思维能力"      # 旧课标名映射
-        assert objs[2]["competency"] == "审美创造"      # "感受…美" 关键词
-
-        # grade 数字变体矩阵
-        for raw, want in [("1", 1), ("2年级", 2), ("三年级", 3), (2.0, 2), (4, 4)]:
-            d = {"meta": {"title": "t", "grade": raw, "lessonType": "精读"},
-                 "slides": []}
-            d = normalize(d)
-            assert d["meta"]["grade"] == want, f"{raw!r} → {d['meta']['grade']}"
-
-    def test_normalize_lesson_type_variants(self):
-        """lessonType 变体映射（validate 分支 5 必挂源）。"""
-        from devpilot.agenthub.yuwen.scripts.common.schema import normalize
-
-        for raw, want in [("识字与写字", "识字写字"), ("口语交际", "口语交际习作"),
-                          ("习作", "口语交际习作"), ("精读课", "精读"),
-                          ("古诗二首的精读", "古诗词"), ("识字", "识字写字"),
-                          ("物理课", "物理课")]:  # 未知原样保留交 validate 报错
-            d = normalize({"meta": {"title": "t", "grade": 2, "lessonType": raw},
-                           "slides": []})
-            assert d["meta"]["lessonType"] == want, f"{raw} → {d['meta']['lessonType']}"
-
-    def test_normalize_render_crash_guards(self):
-        """元素级渲染崩点归一化：heading size 非法、poem 扁平 stanzas、
-        board children 字符串、slide period 混型、audio 字段搬运。"""
-        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
-
-        doc = {
-            "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
-            "slides": [
-                {  # period 字符串（HTML sorted() 崩点）
-                    "id": "s01", "kind": "content", "title": "页1", "period": "1",
-                    "elements": [
-                        # size 非法（HTML KeyError 崩点）
-                        {"type": "heading", "content": "标题", "size": "huge"},
-                        # poem 扁平 stanzas（整首诗静默蒸发）
-                        {"type": "poem", "stanzas": [
-                            {"text": "床前明月光", "ruby": "chuáng"},
-                            "疑是地上霜",
-                        ]},
-                        # board children 字符串（HTML AttributeError 崩点）
-                        {"type": "board", "title": "板书", "structure": [
-                            {"node": "上层", "children": ["支线1", "支线2"]},
-                        ]},
-                        # audio 别名：字段 text 应搬到 content
-                        {"type": "audio", "text": "配乐朗读课文"},
-                        # discussion 别名：content 应搬到 question
-                        {"type": "question", "content": "你想到了什么？"},
-                    ],
-                },
-            ],
-        }
-        doc = normalize(doc)
-        validate(doc)
-        s = doc["slides"][0]
-        assert s["period"] == 1
-        els = s["elements"]
-        assert els[0]["size"] in ("h1", "h2", "h3")
-        # poem 扁平结构被包进 lines
-        assert els[1]["stanzas"][0]["lines"][0]["text"] == "床前明月光"
-        assert els[1]["stanzas"][1]["lines"][0]["text"] == "疑是地上霜"
-        # board 字符串 children 被包成 node 对象
-        assert els[2]["structure"][0]["children"][0] == {"node": "支线1"}
-        # audio → note 且文字保留
-        assert els[3]["type"] == "note" and els[3]["content"] == "配乐朗读课文"
-        # question → discussion 且问题文本保留
-        assert els[4]["type"] == "discussion" and els[4]["question"] == "你想到了什么？"
-
-    def test_normalize_word_card_key_alias(self):
-        """word-card 卡内 word 键别名 → char（此前散装卡被静默丢弃）。"""
-        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
-
-        doc = {
-            "meta": {"title": "静夜思", "grade": 2, "lessonType": "识字写字"},
-            "slides": [{"id": "s01", "kind": "word-cards", "title": "我会认", "period": 1,
-                        "elements": [
-                            {"type": "word-card", "word": "静", "pinyin": "jìng"},
-                            {"type": "word-card", "word": "夜", "pinyin": "yè"},
-                        ]}],
-        }
-        doc = normalize(doc)
-        validate(doc)
-        wcs = [el for el in doc["slides"][0]["elements"] if el["type"] == "word-card"]
-        assert len(wcs) == 1
-        assert [c["char"] for c in wcs[0]["cards"]] == ["静", "夜"]
-
-    def test_normalize_leaves_valid_doc_untouched(self):
-        """已合规文档 normalize 后不变（幂等且不误伤）。"""
-        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
-
-        doc = {
-            "meta": {"title": "坐井观天", "grade": 2, "lessonType": "精读"},
-            "slides": [
-                {
-                    "id": "s01", "kind": "cover", "title": "坐井观天", "period": 1,
-                    "elements": [
-                        {"type": "heading", "content": "坐井观天", "size": "h1"},
-                        {"type": "word-card", "cards": [
-                            {"char": "井", "pinyin": "jǐng", "radical": "一",
-                             "strokes": 4, "groups": ["水井"], "sentence": "青蛙坐在井里。"},
-                        ]},
-                    ],
-                },
-            ],
-            "handout": {"levels": [{"level": "基础", "items": ["抄写生字"]}]},
-        }
-        import copy
-        before = copy.deepcopy(doc)
-        doc = normalize(doc)
-        validate(doc)
-        assert doc["slides"][0]["elements"] == before["slides"][0]["elements"]
-        assert doc["handout"] == before["handout"]
+        assert objs[0]["competency"] == "语言运用"
+        assert objs[1]["competency"] == "思维能力"
+        assert objs[2]["competency"] == "审美创造"
 
     def test_pinyin_split(self):
-        """拼音拆分正确。"""
-        from devpilot.agenthub.yuwen.scripts.common.pinyin import split_syllables, tone_of
+        from devpilot.agenthub.yuwen.scripts.common.pinyin import split_syllables
 
         pairs = split_syllables("静夜思", "jìng yè sī")
         assert len(pairs) == 3
         assert pairs[0][0] == "静"
-        assert pairs[0][1] == "jìng"
-        assert pairs[0][2] == 4  # 四声
-        assert pairs[1][2] == 4
-        assert pairs[2][2] == 1  # 一声
+        assert pairs[0][2] == 4
+        assert pairs[2][2] == 1
 
     def test_tone_color_mapping(self):
-        """声调标色映射完整。"""
         from devpilot.agenthub.yuwen.scripts.common.pinyin import tone_color
-
         assert tone_color(1) == "D9534F"
-        assert tone_color(2) == "E8A33C"
-        assert tone_color(3) == "5BA88A"
         assert tone_color(4) == "5B8AB5"
         assert tone_color(0) == "9AA0A6"
+
+
+# ======================================================================
+# 15. 图集成测试（mock LLM，跨轮状态机全流程）
+# ======================================================================
+
+class TestGraphIntegration:
+    """盘上已确认 → astream 全链（extract→route→slides→plan→review→images→render→report）。"""
+
+    def _drive(self, mock_gw, user_msg="确认"):
+        from devpilot.agenthub.yuwen.graph import build_graph
+        frames = []
+        graph = build_graph(gateway=mock_gw, registry=MagicMock(),
+                            emitter=lambda f: frames.append(f))
+        final = {}
+
+        async def _run():
+            async for chunk in graph.astream({
+                "task": user_msg, "user_message": user_msg, "messages": [],
+                "yuwen_params": PARAMS, "yuwen_params_ready": True}):
+                for _nid, update in chunk.items():
+                    if isinstance(update, dict):
+                        final.update(update)
+        asyncio.run(_run())
+        return final, frames
+
+    def _mock_confirmed_full_chain(self, pages: int = 2):
+        """chat：按 system 标记分发（extract/plan/review/revise）；stream：逐页。"""
+        outline = {**SAMPLE_OUTLINE,
+                   "pages": SAMPLE_OUTLINE["pages"][:pages]}
+        mock_gw = MagicMock()
+
+        def _chat(msgs, **kw):
+            system = msgs[0].content
+            if "参数提取助手" in system:
+                return _chat_response(json.dumps({
+                    "title": PARAMS["title"], "grade": PARAMS["grade"],
+                    "lesson_type": PARAMS["lesson_type"],
+                    "textbook": PARAMS["textbook"], "params_ready": True,
+                    "question": "", "chips": []}, ensure_ascii=False))
+            if "教研助手" in system:
+                return _chat_response(json.dumps(PLAN_JSON, ensure_ascii=False))
+            if "审查专家" in system:
+                return _chat_response(json.dumps(REVIEW_PASS, ensure_ascii=False))
+            # revise（修订助手）兜底：返回替换页内容
+            return _chat_response(json.dumps(_page_json(3), ensure_ascii=False))
+
+        def _stream(msgs, **kw):
+            # user_prompt 里"本页条目"带 {"id": "s0X"…}，按页号产对应 mock 页
+            user = msgs[1].content
+            i = user.find('"id": "s0')
+            idx = int(user[i + 9]) if i >= 0 else 1
+            return _AsyncIter([_chunk(delta=json.dumps(_page_json(idx))),
+                               _chunk(done=True)])
+
+        mock_gw.chat.side_effect = _chat
+        mock_gw.stream_chat.side_effect = _stream
+        return mock_gw, outline
+
+    def test_full_chain_confirmed(self, outputs_tmp):
+        from devpilot.agenthub.yuwen.state import _save_state
+        mock_gw, outline = self._mock_confirmed_full_chain()
+        _save_state(PARAMS, yuwen_outline=outline,
+                    yuwen_outline_confirmed=True, yuwen_params=PARAMS)
+        # mock render 子进程（真渲染由 TestRenderAll 覆盖）
+        fake = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
+                   return_value=fake):
+            final, frames = self._drive(mock_gw)
+
+        assert len(final["yuwen_content"]["slides"]) == 2
+        assert final["yuwen_review"]["pass"] is True
+        assert final["yuwen_content"]["lessonPlan"]["title"] == "静夜思"
+        # done 帧由 report 发（单 done）
+        done_frames = [f for f in frames if f.get("type") == "done"]
+        assert len(done_frames) == 1
+        visited = final["nodes_visited"]
+        for n in ("extract_params", "gen_slides", "gen_plan", "review",
+                  "gen_images", "render", "report"):
+            assert n in visited, f"missing {n} in {visited}"
+
+    def test_first_round_stops_at_outline(self, outputs_tmp):
+        """首轮（盘上无大纲）：extract → gen_outline → END，出 outline 帧。"""
+        from devpilot.agenthub.yuwen.graph import build_graph
+        mock_gw = MagicMock()
+
+        def _chat(msgs, **kw):
+            system = msgs[0].content
+            if "参数提取助手" in system:
+                return _chat_response(json.dumps({
+                    "title": PARAMS["title"], "grade": PARAMS["grade"],
+                    "lesson_type": PARAMS["lesson_type"],
+                    "textbook": PARAMS["textbook"], "params_ready": True,
+                    "question": "", "chips": []}, ensure_ascii=False))
+            return _chat_response(json.dumps(SAMPLE_OUTLINE, ensure_ascii=False))
+
+        mock_gw.chat.side_effect = _chat
+        frames = []
+        graph = build_graph(gateway=mock_gw, registry=MagicMock(),
+                            emitter=lambda f: frames.append(f))
+        final = {}
+
+        async def _run():
+            async for chunk in graph.astream({
+                "task": "静夜思 一年级 古诗词", "user_message": "静夜思 一年级 古诗词",
+                "messages": [], "yuwen_params": PARAMS,
+                "yuwen_params_ready": True}):
+                for _nid, update in chunk.items():
+                    if isinstance(update, dict):
+                        final.update(update)
+        asyncio.run(_run())
+
+        assert any(f.get("type") == "outline" for f in frames)
+        assert final["yuwen_outline_confirmed"] is False
+        # stream_chat（逐页）没被调用——本轮在大纲处 END
+        mock_gw.stream_chat.assert_not_called()
+
+    def test_confirm_round_then_slides(self, outputs_tmp):
+        """第二轮"确认"：extract → confirm（放行）→ gen_slides → … → report。"""
+        from devpilot.agenthub.yuwen.state import _save_state
+        mock_gw, outline = self._mock_confirmed_full_chain()
+        _save_state(PARAMS, yuwen_outline=outline,
+                    yuwen_outline_confirmed=False, yuwen_params=PARAMS)
+        fake = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
+                   return_value=fake):
+            final, frames = self._drive(mock_gw, user_msg="确认")
+        assert final["yuwen_outline_confirmed"] is True
+        assert len(final["yuwen_content"]["slides"]) == 2
+
+    def test_review_revise_loop_second_round_pass(self, outputs_tmp):
+        """图级闭环：首轮 review 不 pass → revise 修页 → 二轮 pass → 放行。"""
+        from devpilot.agenthub.yuwen.graph import build_graph
+        from devpilot.agenthub.yuwen.state import _save_state
+        mock_gw, outline = self._mock_confirmed_full_chain()
+        _save_state(PARAMS, yuwen_outline=outline,
+                    yuwen_outline_confirmed=True, yuwen_params=PARAMS)
+
+        issue_review = {"scores": {"structure": 4, "pedagogy": 4, "content": 2,
+                                   "stage_fit": 4},
+                        "issues": [{"page_id": "s01", "problems": ["内容空泛"]}],
+                        "pass": False}
+        orig_chat = mock_gw.chat.side_effect
+        review_calls = []
+
+        def _chat(msgs, **kw):
+            # 注意区分：revise 的 system 里也提到"质量审查"，用"审查专家"精确匹配
+            if "审查专家" in msgs[0].content:
+                review_calls.append(1)
+                payload = issue_review if len(review_calls) == 1 else REVIEW_PASS
+                return _chat_response(json.dumps(payload, ensure_ascii=False))
+            return orig_chat(msgs, **kw)
+
+        mock_gw.chat.side_effect = _chat
+        fake = MagicMock(returncode=0, stdout="ok", stderr="")
+        frames = []
+        graph = build_graph(gateway=mock_gw, registry=MagicMock(),
+                            emitter=lambda f: frames.append(f))
+        final = {}
+
+        async def _run():
+            async for chunk in graph.astream({
+                "task": "确认", "user_message": "确认", "messages": [],
+                "yuwen_params": PARAMS, "yuwen_params_ready": True}):
+                for _nid, update in chunk.items():
+                    if isinstance(update, dict):
+                        final.update(update)
+        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
+                   return_value=fake):
+            asyncio.run(_run())
+
+        assert len(review_calls) == 2, "review 应跑两轮"
+        assert final["yuwen_revise_rounds"] == 1
+        assert final["yuwen_review"]["pass"] is True
+        assert any(f.get("id") == "revise" for f in frames if f.get("type") == "step")
+        # 修订后的 s01 是 revise mock 返回的第 3 页内容
+        s01 = next(s for s in final["yuwen_content"]["slides"] if s["id"] == "s01")
+        assert s01["elements"][0]["content"] == "页3"

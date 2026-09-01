@@ -23,6 +23,52 @@ export interface FileItem {
   mime: string;
 }
 
+/** 大纲页条目（outline 帧 pages[]，字段全可选防御） */
+export interface OutlinePage {
+  id?: string;
+  kind?: string;
+  title?: string;
+  period?: number;
+  points?: string;
+}
+
+/** 大纲元信息（outline 帧 meta） */
+export interface OutlineMeta {
+  title?: string;
+  grade?: number;
+  lessonType?: string;
+  textbook?: string;
+  periods?: number;
+  theme?: string;
+}
+
+/** outline 帧 payload：课件大纲，等用户确认 */
+export interface OutlineData {
+  meta?: OutlineMeta;
+  pages?: OutlinePage[];
+}
+
+/** review 帧四维评分（1-5） */
+export interface ReviewScores {
+  structure?: number;
+  pedagogy?: number;
+  content?: number;
+  stage_fit?: number;
+}
+
+/** review 帧单页问题 */
+export interface ReviewIssue {
+  page_id?: string;
+  problems?: string[];
+}
+
+/** review 帧 payload：AI 审查结果 */
+export interface ReviewData {
+  scores?: ReviewScores;
+  issues?: ReviewIssue[];
+  pass?: boolean;
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -35,6 +81,10 @@ export interface Message {
   ts: number;
   /** 追问轮快捷选项（content/token 帧可选携带） */
   chips?: string[];
+  /** 课件大纲（outline 帧，仅 yuwen 管线产出） */
+  outline?: OutlineData;
+  /** AI 审查结果（review 帧，仅 yuwen 管线产出） */
+  review?: ReviewData;
 }
 
 // ---- Sessions（服务端持久化：SQLite via /api/sessions）----
@@ -378,6 +428,10 @@ export interface SSEChatOptions {
   onToken?: (delta: string, stepId?: string, chips?: string[]) => void;
   onStep?: (step: StepItem) => void;
   onFiles?: (files: FileItem[]) => void;
+  /** outline 帧：课件大纲（含可选确认 chips） */
+  onOutline?: (outline: OutlineData, chips?: string[]) => void;
+  /** review 帧：AI 审查结果 */
+  onReview?: (review: ReviewData) => void;
   onAgentMeta?: (meta: {
     agent_id: string;
     display_name: string;
@@ -446,6 +500,15 @@ export async function chatSSE(
               break;
             case "files":
               opts.onFiles?.(frame.files as FileItem[]);
+              break;
+            case "outline":
+              opts.onOutline?.(
+                (frame.outline ?? {}) as OutlineData,
+                Array.isArray(frame.chips) ? (frame.chips as string[]) : undefined,
+              );
+              break;
+            case "review":
+              opts.onReview?.((frame.review ?? {}) as ReviewData);
               break;
             case "agent_meta":
               opts.onAgentMeta?.(frame as {
