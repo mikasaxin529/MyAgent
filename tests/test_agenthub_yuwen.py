@@ -463,11 +463,10 @@ class TestGenContent:
         import asyncio
         import json as _json
 
-        # objectives 缺 competency：命名层面无法归一化的真错误，
-        # 必须走"反馈重试"路径而非 normalize 吸收。
+        # grade=9：值域外（1-6），归一化无法吸收的真错误，
+        # 必须走"反馈重试"路径而非 normalize 救回。
         bad = {
-            "meta": {"title": "静夜思", "grade": 1, "lessonType": "古诗词",
-                     "objectives": [{"content": "认字"}]},
+            "meta": {"title": "静夜思", "grade": 9, "lessonType": "古诗词"},
             "slides": self.SAMPLE_JSON["slides"],
         }
         good = self.SAMPLE_JSON
@@ -492,8 +491,8 @@ class TestGenContent:
         # 第 2 次调用：system + user + assistant(上轮输出) + user(纠错反馈)
         roles = [m.role for m in calls[1]]
         assert roles == ["system", "user", "assistant", "user"]
-        assert "objectives" in calls[1][2].content, "assistant 带上轮输出"
-        assert "competency" in calls[1][3].content, "user 反馈带具体错误"
+        assert "grade" in calls[1][2].content, "assistant 带上轮输出"
+        assert "grade" in calls[1][3].content, "user 反馈带具体错误"
         Path(result["yuwen_content_path"]).unlink()
 
     def test_gen_content_truncated_output_feedback(self):
@@ -1014,6 +1013,118 @@ class TestSchema:
         }
         doc = normalize(doc)
         assert doc["slides"][0]["elements"][0]["type"] == "mystery_widget"
+
+    def test_normalize_meta_value_variants(self):
+        """meta 值域归一化：grade 字符串/中文数字、lessonType 变体、
+        competency 旧课标名、objectives 字符串数组（validate 必挂分支）。"""
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        doc = {
+            "meta": {
+                "title": "静夜思",
+                "grade": "一",              # 中文数字
+                "lessonType": "古诗",        # 缺"词"
+                "objectives": [
+                    "认识9个生字",           # 字符串目标
+                    {"content": "发展思维，学会比较", "competency": "思维发展与提升"},  # 旧课标名
+                    {"content": "感受古诗的韵律美"},  # 缺 competency
+                ],
+            },
+            "slides": [{"id": "s01", "kind": "cover", "title": "页", "period": 1,
+                        "elements": [{"type": "heading", "content": "静", "size": "h1"}]}],
+        }
+        doc = normalize(doc)
+        validate(doc)  # 不抛即通过
+        assert doc["meta"]["grade"] == 1
+        assert doc["meta"]["lessonType"] == "古诗词"
+        objs = doc["meta"]["objectives"]
+        assert len(objs) == 3 and all(isinstance(o, dict) for o in objs)
+        assert objs[0]["competency"] == "语言运用"      # 认字 → 默认语言运用
+        assert objs[1]["competency"] == "思维能力"      # 旧课标名映射
+        assert objs[2]["competency"] == "审美创造"      # "感受…美" 关键词
+
+        # grade 数字变体矩阵
+        for raw, want in [("1", 1), ("2年级", 2), ("三年级", 3), (2.0, 2), (4, 4)]:
+            d = {"meta": {"title": "t", "grade": raw, "lessonType": "精读"},
+                 "slides": []}
+            d = normalize(d)
+            assert d["meta"]["grade"] == want, f"{raw!r} → {d['meta']['grade']}"
+
+    def test_normalize_lesson_type_variants(self):
+        """lessonType 变体映射（validate 分支 5 必挂源）。"""
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize
+
+        for raw, want in [("识字与写字", "识字写字"), ("口语交际", "口语交际习作"),
+                          ("习作", "口语交际习作"), ("精读课", "精读"),
+                          ("古诗二首的精读", "古诗词"), ("识字", "识字写字"),
+                          ("物理课", "物理课")]:  # 未知原样保留交 validate 报错
+            d = normalize({"meta": {"title": "t", "grade": 2, "lessonType": raw},
+                           "slides": []})
+            assert d["meta"]["lessonType"] == want, f"{raw} → {d['meta']['lessonType']}"
+
+    def test_normalize_render_crash_guards(self):
+        """元素级渲染崩点归一化：heading size 非法、poem 扁平 stanzas、
+        board children 字符串、slide period 混型、audio 字段搬运。"""
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        doc = {
+            "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
+            "slides": [
+                {  # period 字符串（HTML sorted() 崩点）
+                    "id": "s01", "kind": "content", "title": "页1", "period": "1",
+                    "elements": [
+                        # size 非法（HTML KeyError 崩点）
+                        {"type": "heading", "content": "标题", "size": "huge"},
+                        # poem 扁平 stanzas（整首诗静默蒸发）
+                        {"type": "poem", "stanzas": [
+                            {"text": "床前明月光", "ruby": "chuáng"},
+                            "疑是地上霜",
+                        ]},
+                        # board children 字符串（HTML AttributeError 崩点）
+                        {"type": "board", "title": "板书", "structure": [
+                            {"node": "上层", "children": ["支线1", "支线2"]},
+                        ]},
+                        # audio 别名：字段 text 应搬到 content
+                        {"type": "audio", "text": "配乐朗读课文"},
+                        # discussion 别名：content 应搬到 question
+                        {"type": "question", "content": "你想到了什么？"},
+                    ],
+                },
+            ],
+        }
+        doc = normalize(doc)
+        validate(doc)
+        s = doc["slides"][0]
+        assert s["period"] == 1
+        els = s["elements"]
+        assert els[0]["size"] in ("h1", "h2", "h3")
+        # poem 扁平结构被包进 lines
+        assert els[1]["stanzas"][0]["lines"][0]["text"] == "床前明月光"
+        assert els[1]["stanzas"][1]["lines"][0]["text"] == "疑是地上霜"
+        # board 字符串 children 被包成 node 对象
+        assert els[2]["structure"][0]["children"][0] == {"node": "支线1"}
+        # audio → note 且文字保留
+        assert els[3]["type"] == "note" and els[3]["content"] == "配乐朗读课文"
+        # question → discussion 且问题文本保留
+        assert els[4]["type"] == "discussion" and els[4]["question"] == "你想到了什么？"
+
+    def test_normalize_word_card_key_alias(self):
+        """word-card 卡内 word 键别名 → char（此前散装卡被静默丢弃）。"""
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        doc = {
+            "meta": {"title": "静夜思", "grade": 2, "lessonType": "识字写字"},
+            "slides": [{"id": "s01", "kind": "word-cards", "title": "我会认", "period": 1,
+                        "elements": [
+                            {"type": "word-card", "word": "静", "pinyin": "jìng"},
+                            {"type": "word-card", "word": "夜", "pinyin": "yè"},
+                        ]}],
+        }
+        doc = normalize(doc)
+        validate(doc)
+        wcs = [el for el in doc["slides"][0]["elements"] if el["type"] == "word-card"]
+        assert len(wcs) == 1
+        assert [c["char"] for c in wcs[0]["cards"]] == ["静", "夜"]
 
     def test_normalize_leaves_valid_doc_untouched(self):
         """已合规文档 normalize 后不变（幂等且不误伤）。"""

@@ -122,8 +122,125 @@ def _canonical_type(t):
     return _TYPE_CANONICAL.get(t.lower().replace("_", "-"), t)
 
 
+# ---- 值域归一化：模型常见取值偏差 → 合法枚举值 ---------------------------
+# validate 的枚举分支（grade/lessonType/competency/dimension）对字符串
+# 形态零容忍，而模型输出"古诗"/"识字与写字"/"语言建构与运用"（旧课标名）
+# 是高频偏差——映射表转换零风险，整轮生成报废代价太高。
+
+# 旧课标（2017/2020 版）四素养 → 新课标（2022 版）四素养
+_COMPETENCY_ALIASES = {
+    "语言建构与运用": "语言运用",
+    "思维发展与提升": "思维能力",
+    "审美鉴赏与创造": "审美创造",
+    "文化传承与理解": "文化自信",
+}
+
+_LESSON_TYPE_ALIASES = {
+    "古诗": "古诗词",
+    "诗词": "古诗词",
+    "识字与写字": "识字写字",
+    "识字": "识字写字",
+    "写字": "识字写字",
+    "精读课": "精读",
+    "阅读": "精读",
+    "阅读课": "精读",
+    "口语交际": "口语交际习作",
+    "口语交际课": "口语交际习作",
+    "习作": "口语交际习作",
+    "写作": "口语交际习作",
+    "表达": "口语交际习作",
+}
+
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+
+
+def _normalize_grade_value(raw):
+    """meta.grade 归一化：'1'/'一'/'1年级'/2.0 → int（1-6），失败原样返回。"""
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw)
+    if isinstance(raw, str):
+        s = raw.strip()
+        # 中文数字："二"/"二年级"/"二年级上册"
+        for cn, n in _CN_NUM.items():
+            if s.startswith(cn):
+                return n
+        # 阿拉伯数字："1"/"1年级"/"一年级下册（2024）"里的数字提取
+        import re
+        m = re.search(r"[1-6]", s)
+        if m:
+            return int(m.group())
+    return raw
+
+
+def _canonical_competency(raw):
+    """competency 归一化：旧课标名 → 新课标名；未知原样返回。"""
+    if isinstance(raw, str):
+        return _COMPETENCY_ALIASES.get(raw.strip(), raw)
+    return raw
+
+
+def _canonical_lesson_type(raw):
+    """lessonType 归一化：常见变体 → 四课型之一；未知原样返回。"""
+    if not isinstance(raw, str):
+        return raw
+    s = raw.strip()
+    if s in LESSON_TYPES:
+        return s
+    if s in _LESSON_TYPE_ALIASES:
+        return _LESSON_TYPE_ALIASES[s]
+    # 包含式兜底："口语交际与习作"/"古诗二首"→按关键词归类
+    for kw, lt in (("口语", "口语交际习作"), ("习作", "口语交际习作"),
+                   ("古诗", "古诗词"), ("诗词", "古诗词"), ("识字", "识字写字"),
+                   ("写字", "识字写字"), ("精读", "精读")):
+        if kw in s:
+            return lt
+    return s
+
+
+def _guess_competency(text: str) -> str:
+    """按目标内容关键词推断核心素养（objectives 缺 competency 时兜底）。
+
+    推断错了只影响素养标签，内容本身无损——比整轮生成报废划算得多。
+    """
+    t = text or ""
+    for kw, comp in (("文化", "文化自信"), ("传统", "文化自信"), ("爱国", "文化自信"),
+                     ("感受", "审美创造"), ("欣赏", "审美创造"), ("美", "审美创造"),
+                     ("想象", "思维能力"), ("思维", "思维能力"), ("判断", "思维能力"),
+                     ("比较", "思维能力")):
+        if kw in t:
+            return comp
+    return "语言运用"  # 识字/朗读/写字/表达等默认语言运用
+
+
+
 def normalize(doc: dict) -> dict:
     """就地归一化模型输出常见偏差，返回同一 doc。"""
+    # ---- meta 值域归一化（grade/lessonType/objectives）----
+    meta = doc.get("meta")
+    if isinstance(meta, dict):
+        g = _normalize_grade_value(meta.get("grade"))
+        if isinstance(g, int):
+            meta["grade"] = g
+        meta["lessonType"] = _canonical_lesson_type(meta.get("lessonType"))
+        # objectives 字符串数组 → 对象数组（模型高频写法）；
+        # competency 旧课标名 → 新课标名；缺失时按内容关键词补默认素养
+        objs = meta.get("objectives")
+        if isinstance(objs, list):
+            fixed = []
+            for obj in objs:
+                if isinstance(obj, str) and obj.strip():
+                    fixed.append({"content": obj,
+                                  "competency": _guess_competency(obj)})
+                elif isinstance(obj, dict):
+                    comp = _canonical_competency(obj.get("competency"))
+                    if comp not in CORE_COMPETENCIES:
+                        comp = _guess_competency(obj.get("content", ""))
+                    obj["competency"] = comp
+                    fixed.append(obj)
+            meta["objectives"] = fixed
+
     # handout.content[{section,items}] → handout.levels[{level,items}]
     ho = doc.get("handout")
     if isinstance(ho, dict):
@@ -150,9 +267,15 @@ def normalize(doc: dict) -> dict:
         sub = slide.pop("subtitle", None)
         if sub and isinstance(sub, str) and sub.strip():
             slide["title"] = f"{slide.get('title') or ''} {sub}".strip()
-        # period/totalPeriods 混写
+        # period/totalPeriods 混写；period 字符串 "1"/1.0 → int
+        # （渲染层 sorted(set(periods)) 混型直接 TypeError，必须归一）
         if "totalPeriods" in slide:
             slide.pop("totalPeriods")
+        if "period" in slide:
+            try:
+                slide["period"] = int(slide["period"])
+            except (TypeError, ValueError):
+                slide["period"] = 1
 
         # elements 缺失/非数组 → 尽力重建：
         # - dict（单元素对象）→ 包成数组
@@ -191,6 +314,56 @@ def normalize(doc: dict) -> dict:
             canonical = _canonical_type(t)
             if canonical != t:
                 el["type"] = canonical
+                # 别名转换配套字段搬运：audio 的文字字段 → note.content，
+                # text/title 键 → paragraph/heading 的 content（别名表只改
+                # type 名不改字段，转出空元素是最常见的次生缺陷）
+                if canonical == "note" and "content" not in el:
+                    for k in ("text", "src", "label", "title"):
+                        if isinstance(el.get(k), str) and el[k].strip():
+                            el["content"] = el.pop(k)
+                            break
+                elif canonical == "paragraph" and "content" not in el:
+                    for k in ("text", "body"):
+                        if isinstance(el.get(k), str) and el[k].strip():
+                            el["content"] = el.pop(k)
+                            break
+                elif canonical == "heading" and "content" not in el:
+                    for k in ("text", "title"):
+                        if isinstance(el.get(k), str) and el[k].strip():
+                            el["content"] = el.pop(k)
+                            break
+                elif canonical == "discussion" and "question" not in el:
+                    if isinstance(el.get("content"), str) and el["content"].strip():
+                        el["question"] = el.pop("content")
+            # heading.size 渲染层直接查表 {size: cls}，非 h1/h2/h3 → KeyError
+            if el.get("type") == "heading" and el.get("size") not in ("h1", "h2", "h3"):
+                el["size"] = "h1" if not el.get("size") else "h2"
+            # poem: stanzas 扁平 [{"text","ruby"}] → [{"lines":[...]}]。
+            # 渲染层只认 lines 层，扁平结构下整首诗静默蒸发（不崩但内容全丢）
+            if el.get("type") == "poem":
+                stanzas = el.get("stanzas")
+                if isinstance(stanzas, list):
+                    fixed = []
+                    for st in stanzas:
+                        if isinstance(st, dict):
+                            if "lines" not in st and "text" in st:
+                                st = {"lines": [st]}
+                            fixed.append(st)
+                        elif isinstance(st, str) and st.strip():
+                            # 纯诗句字符串 → 单行 stanza
+                            fixed.append({"lines": [{"text": st}]})
+                    el["stanzas"] = fixed
+            # board: children 里塞字符串 → {"node": s}（HTML 对字符串
+            # child.get 直接 AttributeError，PPTX 有 isinstance 兜底）
+            if el.get("type") == "board":
+                structure = el.get("structure")
+                if isinstance(structure, list):
+                    for node in structure:
+                        if isinstance(node, dict) and isinstance(node.get("children"), list):
+                            node["children"] = [
+                                {"node": c} if isinstance(c, str) else c
+                                for c in node["children"]
+                            ]
             # word-card: content=汉字 → char（模型常用 content）
             if el.get("type") == "word-card" and "cards" not in el:
                 if "content" in el and "char" not in el:
@@ -199,8 +372,11 @@ def normalize(doc: dict) -> dict:
             if el.get("type") == "word-card" and "cards" not in el:
                 card = {k: el[k] for k in
                         ("char", "pinyin", "radical", "strokes", "strokeOrder",
-                         "structure", "groups", "example", "sentence")
+                         "structure", "groups", "example", "sentence", "word")
                         if k in el}
+                # 卡内键别名：word→char（模型爱用 word 装汉字）
+                if "word" in card and "char" not in card:
+                    card["char"] = card.pop("word")
                 if "structure" in card and "radical" not in card:
                     card["radical"] = card.pop("structure")
                 if "example" in card:
