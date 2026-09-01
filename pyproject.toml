@@ -72,17 +72,17 @@ where = ["src"]
 
 # 非代码资源随包分发：prompts/nodes/*.md 是运行时 load_prompt 读的提示词
 # 模板，缺了会在 route/planner/reflector 节点抛 FileNotFoundError。
-# yuwen_skill 的 references（schema/few-shot 示例，gen_content 运行时读）与
+# yuwen 的 references（schema/few-shot 示例，gen_content 运行时读）与
 # assets（HTML 模板/CSS/JS，render_html 运行时读）同理——Docker 里 pip
 # 非 editable 安装，缺了课件 agent 直接不可用。
 [tool.setuptools.package-data]
 devpilot = [
     "prompts/nodes/*.md",
-    "agenthub/yuwen_skill/references/*.md",
-    "agenthub/yuwen_skill/references/examples/*.json",
-    "agenthub/yuwen_skill/assets/css/*",
-    "agenthub/yuwen_skill/assets/js/*",
-    "agenthub/yuwen_skill/assets/templates/*",
+    "agenthub/yuwen/references/*.md",
+    "agenthub/yuwen/references/examples/*.json",
+    "agenthub/yuwen/assets/css/*",
+    "agenthub/yuwen/assets/js/*",
+    "agenthub/yuwen/assets/templates/*",
 ]
 
 [tool.ruff]

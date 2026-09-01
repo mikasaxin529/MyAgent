@@ -63,31 +63,31 @@ class TestYuwenManifest:
 
     def test_manifest_fields(self):
         """manifest.py 导出所有必填字段。"""
-        from devpilot.agenthub.yuwen_skill import manifest as m
-        assert m.AGENT_ID == "yuwen_skill"
+        from devpilot.agenthub.yuwen import manifest as m
+        assert m.AGENT_ID == "yuwen"
         assert m.DISPLAY_NAME == "语文课件生成"
         assert m.DESCRIPTION
         assert m.IDENTITY_COLOR
         assert m.PLACEHOLDER
 
     def test_registry_discovers_yuwen(self):
-        """注册中心能发现 yuwen_skill。"""
+        """注册中心能发现 yuwen。"""
         from devpilot.agenthub import list_agents, reset_cache
 
         reset_cache()
         agents = list_agents()
         ids = [a.agent_id for a in agents]
-        assert "yuwen_skill" in ids, f"expected 'yuwen_skill' in {ids}"
+        assert "yuwen" in ids, f"expected 'yuwen' in {ids}"
 
     def test_manifest_to_dict_format(self):
         """to_dict() 字段名对齐契约。"""
         from devpilot.agenthub import get_agent, reset_cache
 
         reset_cache()
-        agent = get_agent("yuwen_skill")
+        agent = get_agent("yuwen")
         assert agent is not None
         d = agent.to_dict()
-        assert d["id"] == "yuwen_skill"
+        assert d["id"] == "yuwen"
         assert d["display_name"] == "语文课件生成"
         assert "description" in d
         assert "identity_color" in d
@@ -103,7 +103,7 @@ class TestYuwenGraph:
 
     def test_graph_compiles(self):
         """build_graph 返回可调用的编译图。"""
-        from devpilot.agenthub.yuwen_skill.graph import build_graph
+        from devpilot.agenthub.yuwen.graph import build_graph
 
         mock_gw = MagicMock()
         mock_registry = MagicMock()
@@ -113,7 +113,7 @@ class TestYuwenGraph:
 
     def test_graph_has_four_nodes(self):
         """图有 4 个节点：extract_params / gen_content / render / report。"""
-        from devpilot.agenthub.yuwen_skill.graph import build_graph
+        from devpilot.agenthub.yuwen.graph import build_graph
 
         mock_gw = MagicMock()
         mock_registry = MagicMock()
@@ -126,7 +126,7 @@ class TestYuwenGraph:
 
     def test_entry_point_is_extract_params(self):
         """入口是 extract_params。"""
-        from devpilot.agenthub.yuwen_skill.graph import build_graph
+        from devpilot.agenthub.yuwen.graph import build_graph
 
         mock_gw = MagicMock()
         mock_registry = MagicMock()
@@ -145,28 +145,28 @@ class TestExtractParams:
 
     def test_params_ready_goes_to_gen_content(self):
         """参数齐备时条件边走向 gen_content。"""
-        from devpilot.agenthub.yuwen_skill.graph import _params_ready
+        from devpilot.agenthub.yuwen.graph import _params_ready
 
         state = {"yuwen_params_ready": True}
         assert _params_ready(state) == "gen_content"
 
     def test_params_not_ready_ends(self):
         """参数缺失时条件边走向 __end__。"""
-        from devpilot.agenthub.yuwen_skill.graph import _params_ready
+        from devpilot.agenthub.yuwen.graph import _params_ready
 
         state = {"yuwen_params_ready": False}
         assert _params_ready(state) == "__end__"
 
     def test_params_ready_defaults_false(self):
         """state 无 yuwen_params_ready 时默认走向 __end__。"""
-        from devpilot.agenthub.yuwen_skill.graph import _params_ready
+        from devpilot.agenthub.yuwen.graph import _params_ready
 
         state = {}
         assert _params_ready(state) == "__end__"
 
     def test_extract_params_full_parsed(self):
         """LLM 返回完整参数时，节点返回 params_ready=True。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
@@ -199,7 +199,7 @@ class TestExtractParams:
 
     def test_extract_params_missing_grade(self):
         """缺年级时 params_ready=False，发出追问。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
@@ -230,7 +230,7 @@ class TestExtractParams:
 
     def test_extract_params_llm_failure(self):
         """LLM 调用异常时降级返回。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.side_effect = RuntimeError("API 不可用")
@@ -248,7 +248,7 @@ class TestExtractParams:
 
     def test_extract_params_gateway_called_with_json_mode(self):
         """gateway.chat 被调用且 json_mode=True。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_extract_params_node
+        from devpilot.agenthub.yuwen.graph import _make_extract_params_node
 
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
@@ -337,7 +337,7 @@ class TestGenContent:
 
     def test_gen_content_returns_json_path(self):
         """gen_content 产出 JSON 文件路径。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         import json as _json
         sample_json_str = _json.dumps(self.SAMPLE_JSON, ensure_ascii=False)
@@ -375,7 +375,7 @@ class TestGenContent:
         import json as _json
         wrapped = f"```json\n{_json.dumps(self.SAMPLE_JSON, ensure_ascii=False)}\n```"
 
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         mock_gw = MagicMock()
         mock_gw.stream_chat.return_value = _AsyncIter([
@@ -400,7 +400,7 @@ class TestGenContent:
 
     def test_gen_content_invalid_json_retry(self):
         """JSON 解析失败时重试一次。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         import json as _json
         sample_str = _json.dumps(self.SAMPLE_JSON, ensure_ascii=False)
@@ -430,7 +430,7 @@ class TestGenContent:
 
     def test_gen_content_both_attempts_fail(self):
         """所有尝试都失败时返回空路径。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         mock_gw = MagicMock()
         mock_gw.stream_chat.return_value = _AsyncIter([
@@ -458,7 +458,7 @@ class TestGenContent:
         与"原样重掷"的区别：第 2 次调用必须携带第 1 次的输出与错误说明，
         模型看得到哪里错才能修正——这是自动反思重新生成的核心。
         """
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         import asyncio
         import json as _json
@@ -497,7 +497,7 @@ class TestGenContent:
 
     def test_gen_content_truncated_output_feedback(self):
         """finish_reason=length 截断 → 反馈带压缩指令（针对性纠错）。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         import asyncio
         import json as _json
@@ -532,7 +532,7 @@ class TestGenContent:
 
     def test_gen_content_temperature_escalation(self):
         """重试温度递增（0.3/0.5/0.7）：打破同温采样的同质失败。"""
-        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+        from devpilot.agenthub.yuwen.graph import _make_gen_content_node
 
         import asyncio
 
@@ -563,7 +563,7 @@ class TestRenderAll:
     def test_render_jingyesi_exit_0(self):
         """静夜思 JSON → 退出码 0。"""
         import subprocess, sys
-        base = _SRC / "devpilot" / "agenthub" / "yuwen_skill"
+        base = _SRC / "devpilot" / "agenthub" / "yuwen"
         script = base / "scripts" / "render_all.py"
         json_path = base / "references" / "examples" / "jingyesi.json"
         out_dir = _PROJECT_ROOT / "outputs" / "test_yuwen" / "jingyesi"
@@ -589,7 +589,7 @@ class TestRenderAll:
     def test_render_zuojing_exit_0(self):
         """坐井观天 JSON（2 课时）→ 退出码 0。"""
         import subprocess, sys
-        base = _SRC / "devpilot" / "agenthub" / "yuwen_skill"
+        base = _SRC / "devpilot" / "agenthub" / "yuwen"
         script = base / "scripts" / "render_all.py"
         json_path = base / "references" / "examples" / "zuojing-guantian.json"
         out_dir = _PROJECT_ROOT / "outputs" / "test_yuwen" / "zuojing"
@@ -613,7 +613,7 @@ class TestRenderAll:
     def test_render_check_deps(self):
         """check_deps.py 返回 0（全部就绪）。"""
         import subprocess, sys
-        script = str(_SRC / "devpilot" / "agenthub" / "yuwen_skill" / "scripts" / "check_deps.py")
+        script = str(_SRC / "devpilot" / "agenthub" / "yuwen" / "scripts" / "check_deps.py")
 
         result = subprocess.run(
             [sys.executable, script],
@@ -625,7 +625,7 @@ class TestRenderAll:
     def test_render_nonexistent_json(self):
         """不存在的 JSON → 退出码 2。"""
         import subprocess, sys
-        script = str(_SRC / "devpilot" / "agenthub" / "yuwen_skill" / "scripts" / "render_all.py")
+        script = str(_SRC / "devpilot" / "agenthub" / "yuwen" / "scripts" / "render_all.py")
 
         result = subprocess.run(
             [sys.executable, script, "/nonexistent/path.json"],
@@ -644,7 +644,7 @@ class TestConditionalEdge:
 
     def test_params_ready_function(self):
         """_params_ready 条件边直接返回字符串。"""
-        from devpilot.agenthub.yuwen_skill.graph import _params_ready
+        from devpilot.agenthub.yuwen.graph import _params_ready
 
         assert _params_ready({"yuwen_params_ready": True}) == "gen_content"
         assert _params_ready({"yuwen_params_ready": False}) == "__end__"
@@ -662,7 +662,7 @@ class TestGraphIntegration:
 
     async def _run_graph(self, user_input: str, mock_gw) -> dict:
         """驱动图执行并返回最终 state。"""
-        from devpilot.agenthub.yuwen_skill.graph import build_graph
+        from devpilot.agenthub.yuwen.graph import build_graph
 
         registry = MagicMock()
         frames = []
@@ -739,7 +739,7 @@ class TestGraphIntegration:
         }, ensure_ascii=False))
 
         registry = MagicMock()
-        from devpilot.agenthub.yuwen_skill.graph import build_graph
+        from devpilot.agenthub.yuwen.graph import build_graph
 
         import asyncio
 
@@ -822,7 +822,7 @@ class TestSchema:
 
     def test_validate_valid_doc(self):
         """合法文档通过校验。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import validate
 
         doc = {
             "meta": {
@@ -848,14 +848,14 @@ class TestSchema:
 
     def test_validate_missing_meta_raises(self):
         """缺 meta 抛 SchemaError。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import validate, SchemaError
+        from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
 
         with pytest.raises(SchemaError):
             validate({})
 
     def test_validate_invalid_lesson_type(self):
         """非法课型抛 SchemaError。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import validate, SchemaError
+        from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
 
         with pytest.raises(SchemaError):
             validate({
@@ -865,7 +865,7 @@ class TestSchema:
 
     def test_validate_unknown_element_type(self):
         """未知元素类型抛 SchemaError。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import validate, SchemaError
+        from devpilot.agenthub.yuwen.scripts.common.schema import validate, SchemaError
 
         with pytest.raises(SchemaError):
             validate({
@@ -879,7 +879,7 @@ class TestSchema:
         复现 2026-08-31 生产失败：slides[].type、text/question/audio 元素、
         散装 word-card（每元素一张卡）、handout.content 全是模型自创结构。
         """
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
             "version": "1.0.0",
@@ -953,7 +953,7 @@ class TestSchema:
 
         模型输出 elements 为 dict/字符串/缺失（内容散在顶层 content/text）。
         """
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         meta = {"title": "静夜思", "grade": 2, "lessonType": "古诗词"}
         cases = [
@@ -985,7 +985,7 @@ class TestSchema:
         模型写 word_card/wordCard/WordCard/ruby_line 等命名漂移——
         同一元素只是写法不同，统一切换连字符小写而非报错重生成。
         """
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         variants = ["word_card", "wordCard", "WordCard", "WORD-CARD", "Word_Card",
                     "ruby_line", "rubyLine", "RubyLine"]
@@ -1017,7 +1017,7 @@ class TestSchema:
     def test_normalize_meta_value_variants(self):
         """meta 值域归一化：grade 字符串/中文数字、lessonType 变体、
         competency 旧课标名、objectives 字符串数组（validate 必挂分支）。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
             "meta": {
@@ -1052,7 +1052,7 @@ class TestSchema:
 
     def test_normalize_lesson_type_variants(self):
         """lessonType 变体映射（validate 分支 5 必挂源）。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize
 
         for raw, want in [("识字与写字", "识字写字"), ("口语交际", "口语交际习作"),
                           ("习作", "口语交际习作"), ("精读课", "精读"),
@@ -1065,7 +1065,7 @@ class TestSchema:
     def test_normalize_render_crash_guards(self):
         """元素级渲染崩点归一化：heading size 非法、poem 扁平 stanzas、
         board children 字符串、slide period 混型、audio 字段搬运。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
             "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
@@ -1110,7 +1110,7 @@ class TestSchema:
 
     def test_normalize_word_card_key_alias(self):
         """word-card 卡内 word 键别名 → char（此前散装卡被静默丢弃）。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
             "meta": {"title": "静夜思", "grade": 2, "lessonType": "识字写字"},
@@ -1128,7 +1128,7 @@ class TestSchema:
 
     def test_normalize_leaves_valid_doc_untouched(self):
         """已合规文档 normalize 后不变（幂等且不误伤）。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+        from devpilot.agenthub.yuwen.scripts.common.schema import normalize, validate
 
         doc = {
             "meta": {"title": "坐井观天", "grade": 2, "lessonType": "精读"},
@@ -1155,7 +1155,7 @@ class TestSchema:
 
     def test_pinyin_split(self):
         """拼音拆分正确。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.pinyin import split_syllables, tone_of
+        from devpilot.agenthub.yuwen.scripts.common.pinyin import split_syllables, tone_of
 
         pairs = split_syllables("静夜思", "jìng yè sī")
         assert len(pairs) == 3
@@ -1167,7 +1167,7 @@ class TestSchema:
 
     def test_tone_color_mapping(self):
         """声调标色映射完整。"""
-        from devpilot.agenthub.yuwen_skill.scripts.common.pinyin import tone_color
+        from devpilot.agenthub.yuwen.scripts.common.pinyin import tone_color
 
         assert tone_color(1) == "D9534F"
         assert tone_color(2) == "E8A33C"

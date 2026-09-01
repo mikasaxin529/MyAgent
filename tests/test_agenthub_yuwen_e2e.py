@@ -1,7 +1,7 @@
 """语文智能体端点级端到端测试：TestClient + mock gateway 覆盖 SSE 帧序列。
 
 测试覆盖：
-1. 缺参轮：agent=yuwen_skill 发送"帮我做课件" → content 含追问 + 单 done 无双 done
+1. 缺参轮：agent=yuwen 发送"帮我做课件" → content 含追问 + 单 done 无双 done
 2. 补齐轮：发送完整参数 → step 链完整 + files 帧 + files 可下载
 3. grade=2.0 浮点数能放行到 params_ready
 4. grade="2" 字符串能放行到 params_ready
@@ -189,7 +189,7 @@ class TestYuwenEndpoints:
 
         resp = c.post("/api/chat", json={
             "prompt": "帮我做《静夜思》的课件",
-            "agent": "yuwen_skill",
+            "agent": "yuwen",
         })
         assert resp.status_code == 200
         frames = _parse_sse(resp.text)
@@ -197,7 +197,7 @@ class TestYuwenEndpoints:
         # 检查 agent_meta 帧
         meta_frames = [f for f in frames if f.get("type") == "agent_meta"]
         assert len(meta_frames) == 1
-        assert meta_frames[0]["agent_id"] == "yuwen_skill"
+        assert meta_frames[0]["agent_id"] == "yuwen"
 
         # 检查 step 帧：extract_params running → done
         step_frames = [f for f in frames if f.get("type") == "step"]
@@ -238,7 +238,7 @@ class TestYuwenEndpoints:
 
         # 创建测试输出目录和模拟渲染产物
         from devpilot.web.api import OUTPUTS_DIR
-        session_dir = OUTPUTS_DIR / "yuwen_skill" / "静夜思-古诗词"
+        session_dir = OUTPUTS_DIR / "yuwen" / "静夜思-古诗词"
         session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "静夜思-古诗词.pptx").write_text("fake pptx")
         (session_dir / "静夜思.html").write_text("fake html")
@@ -256,11 +256,11 @@ class TestYuwenEndpoints:
         fake_result.returncode = 0
         fake_result.stdout = "ok"
         fake_result.stderr = ""
-        with patch("devpilot.agenthub.yuwen_skill.graph.subprocess.run",
+        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
                    return_value=fake_result):
             resp = c.post("/api/chat", json={
                 "prompt": "静夜思 一年级 古诗词",
-                "agent": "yuwen_skill",
+                "agent": "yuwen",
             })
         assert resp.status_code == 200
         frames = _parse_sse(resp.text)
@@ -325,11 +325,11 @@ class TestYuwenEndpoints:
         fake_result.returncode = 0
         fake_result.stdout = "ok"
         fake_result.stderr = ""
-        with patch("devpilot.agenthub.yuwen_skill.graph.subprocess.run",
+        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
                    return_value=fake_result):
             resp = c.post("/api/chat", json={
                 "prompt": "静夜思 二年级 古诗词",
-                "agent": "yuwen_skill",
+                "agent": "yuwen",
             })
         assert resp.status_code == 200
         frames = _parse_sse(resp.text)
@@ -342,7 +342,7 @@ class TestYuwenEndpoints:
         # 清理
         import shutil
         from devpilot.web.api import OUTPUTS_DIR
-        d = OUTPUTS_DIR / "yuwen_skill" / "静夜思-古诗词"
+        d = OUTPUTS_DIR / "yuwen" / "静夜思-古诗词"
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 
@@ -369,11 +369,11 @@ class TestYuwenEndpoints:
         fake_result.returncode = 0
         fake_result.stdout = "ok"
         fake_result.stderr = ""
-        with patch("devpilot.agenthub.yuwen_skill.graph.subprocess.run",
+        with patch("devpilot.agenthub.yuwen.nodes.render.subprocess.run",
                    return_value=fake_result):
             resp = c.post("/api/chat", json={
                 "prompt": "静夜思 二年级 古诗词",
-                "agent": "yuwen_skill",
+                "agent": "yuwen",
             })
         assert resp.status_code == 200
         frames = _parse_sse(resp.text)
@@ -385,7 +385,7 @@ class TestYuwenEndpoints:
         # 清理
         import shutil
         from devpilot.web.api import OUTPUTS_DIR
-        d = OUTPUTS_DIR / "yuwen_skill" / "静夜思-古诗词"
+        d = OUTPUTS_DIR / "yuwen" / "静夜思-古诗词"
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 
@@ -422,7 +422,7 @@ class TestYuwenEndpoints:
 
         resp = c.post("/api/chat", json={
             "prompt": "帮我做课件",
-            "agent": "yuwen_skill",
+            "agent": "yuwen",
         })
         assert resp.status_code == 200
         frames = _parse_sse(resp.text)

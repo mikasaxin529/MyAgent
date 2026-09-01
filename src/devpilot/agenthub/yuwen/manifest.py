@@ -5,7 +5,7 @@ identity_color 用朱砂 #B5442E（对齐设计系统 --seal 色）。
 """
 from __future__ import annotations
 
-AGENT_ID = "yuwen_skill"
+AGENT_ID = "yuwen"
 DISPLAY_NAME = "语文课件生成"
 DESCRIPTION = "课文名 + 年级 → pptx / HTML / docx 三件套"
 IDENTITY_COLOR = "#B5442E"

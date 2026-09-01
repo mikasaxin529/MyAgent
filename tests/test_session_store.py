@@ -62,9 +62,9 @@ class TestSessionsCRUD:
 
     def test_list_filters_by_agent(self, store):
         store.upsert_session("a", "general", "t", [_msg()])
-        store.upsert_session("b", "yuwen_skill", "t", [_msg()])
+        store.upsert_session("b", "yuwen", "t", [_msg()])
         assert len(store.list_sessions()) == 2
-        only = store.list_sessions("yuwen_skill")
+        only = store.list_sessions("yuwen")
         assert len(only) == 1 and only[0]["id"] == "b"
 
     def test_list_orders_by_updated_desc(self, store):
@@ -169,7 +169,7 @@ class TestSessionAPI:
 
     def test_list_endpoint(self, client):
         client.put("/api/sessions/s_rest2", json={
-            "agent": "yuwen_skill", "title": "t", "messages": [_msg()]})
+            "agent": "yuwen", "title": "t", "messages": [_msg()]})
         r = client.get("/api/sessions")
         ids = [s["id"] for s in r.json()["sessions"]]
         assert "s_rest2" in ids

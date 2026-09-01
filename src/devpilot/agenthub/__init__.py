@@ -40,7 +40,7 @@ class AgentManifest:
         self.identity_color = identity_color
         self.placeholder = placeholder
         # 端点层是否替本智能体注入 SYSTEM_CHAT。
-        # False（默认）= 图自管 system 消息（如 yuwen_skill），端点不注入。
+        # False（默认）= 图自管 system 消息（如 yuwen），端点不注入。
         self.managed_system = managed_system
         self.graph_fn: Callable[..., Any] | None = None
 

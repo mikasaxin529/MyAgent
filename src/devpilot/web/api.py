@@ -384,7 +384,7 @@ async def chat_sse(request: Request) -> StreamingResponse:
     except Exception:  # noqa: BLE001
         facts = []
     # 仅 managed_system=True 的智能体（general）由端点注入 SYSTEM_CHAT。
-    # 其他智能体（如 yuwen_skill）由图自管 system 消息，避免双 system 冲突。
+    # 其他智能体（如 yuwen）由图自管 system 消息，避免双 system 冲突。
     if agent.managed_system:
         sys_text = SYSTEM_CHAT
         if facts:
