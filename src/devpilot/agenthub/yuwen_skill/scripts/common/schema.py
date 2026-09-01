@@ -91,6 +91,37 @@ _TYPE_ALIASES = {
     "ending": "divider",
 }
 
+# 命名风格变体 → 规范连字符名。模型写 word_card / wordCard / WordCard /
+# ruby_line 等都是同一元素，只是命名风格漂移——统一切换成连字符小写即可，
+# 无需丢弃重新生成。
+_TYPE_CANONICAL = {t: t for t in ELEMENT_TYPES}
+for _t in ELEMENT_TYPES:
+    if "-" in _t:
+        _first, _rest = _t.split("-", 1)
+        # 下划线形态 word_card / 首段拼接 camelCase wordCard / 大写开头 WordCard
+        for _variant in (
+            _t.replace("-", "_"),
+            _first + _rest[:1].upper() + _rest[1:],
+            _t.replace("-", "_").title().replace("_", "").replace(" ", "_"),
+        ):
+            _TYPE_CANONICAL.setdefault(_variant, _t)
+# 全小写 / 全大写等大小写漂移：小写化匹配兜底
+for _k in list(_TYPE_CANONICAL):
+    _TYPE_CANONICAL.setdefault(_k.lower(), _TYPE_CANONICAL[_k])
+
+
+def _canonical_type(t):
+    """元素类型归一化：别名 → 规范名；命名变体 → 规范名；未知原样返回。"""
+    if not isinstance(t, str):
+        return t
+    if t in _TYPE_ALIASES:
+        return _TYPE_ALIASES[t]
+    if t in _TYPE_CANONICAL:
+        return _TYPE_CANONICAL[t]
+    # 兜底：小写 + 下划线→连字符（WORD-CARD / Word_Card 等混合形态）
+    return _TYPE_CANONICAL.get(t.lower().replace("_", "-"), t)
+
+
 def normalize(doc: dict) -> dict:
     """就地归一化模型输出常见偏差，返回同一 doc。"""
     # handout.content[{section,items}] → handout.levels[{level,items}]
@@ -155,9 +186,11 @@ def normalize(doc: dict) -> dict:
             if not isinstance(el, dict):
                 continue
             t = el.get("type")
-            # 类型别名替换
-            if t in _TYPE_ALIASES:
-                el["type"] = _TYPE_ALIASES[t]
+            # 类型归一化：别名（text/question…）+ 命名风格变体（word_card/
+            # wordCard/WordCard…）→ 规范枚举名
+            canonical = _canonical_type(t)
+            if canonical != t:
+                el["type"] = canonical
             # word-card: content=汉字 → char（模型常用 content）
             if el.get("type") == "word-card" and "cards" not in el:
                 if "content" in el and "char" not in el:

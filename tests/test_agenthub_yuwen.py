@@ -41,9 +41,11 @@ class _AsyncIter:
         raise StopAsyncIteration
 
 
-def _chunk(delta: str = "", reasoning: str = "", done: bool = False):
+def _chunk(delta: str = "", reasoning: str = "", done: bool = False,
+           finish_reason: str = ""):
     from devpilot.gateway import ChatChunk
-    return ChatChunk(delta=delta, reasoning=reasoning, done=done)
+    return ChatChunk(delta=delta, reasoning=reasoning, done=done,
+                     finish_reason=finish_reason)
 
 
 def _chat_response(content: str, finish_reason: str = "stop"):
@@ -427,7 +429,7 @@ class TestGenContent:
         Path(result["yuwen_content_path"]).unlink()  # cleanup
 
     def test_gen_content_both_attempts_fail(self):
-        """两次都失败时返回空路径。"""
+        """所有尝试都失败时返回空路径。"""
         from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
 
         mock_gw = MagicMock()
@@ -449,6 +451,107 @@ class TestGenContent:
         }))
 
         assert result["yuwen_content_path"] == ""
+
+    def test_gen_content_schema_retry_with_feedback(self):
+        """schema 校验失败 → 反思反馈重试（assistant+user 消息回传错误）。
+
+        与"原样重掷"的区别：第 2 次调用必须携带第 1 次的输出与错误说明，
+        模型看得到哪里错才能修正——这是自动反思重新生成的核心。
+        """
+        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+
+        import asyncio
+        import json as _json
+
+        # objectives 缺 competency：命名层面无法归一化的真错误，
+        # 必须走"反馈重试"路径而非 normalize 吸收。
+        bad = {
+            "meta": {"title": "静夜思", "grade": 1, "lessonType": "古诗词",
+                     "objectives": [{"content": "认字"}]},
+            "slides": self.SAMPLE_JSON["slides"],
+        }
+        good = self.SAMPLE_JSON
+
+        calls = []
+        mock_gw = MagicMock()
+
+        def _side(msgs, **kw):
+            calls.append(list(msgs))
+            text = _json.dumps(bad if len(calls) == 1 else good, ensure_ascii=False)
+            return _AsyncIter([_chunk(delta=text), _chunk(done=True)])
+
+        mock_gw.stream_chat.side_effect = _side
+        node = _make_gen_content_node(mock_gw, None)
+        result = asyncio.run(node({
+            "yuwen_params": {"title": "静夜思", "grade": 1,
+                             "lesson_type": "古诗词", "textbook": "部编版一年级"},
+        }))
+
+        assert result["yuwen_content_path"], "第 2 轮应成功"
+        assert len(calls) == 2
+        # 第 2 次调用：system + user + assistant(上轮输出) + user(纠错反馈)
+        roles = [m.role for m in calls[1]]
+        assert roles == ["system", "user", "assistant", "user"]
+        assert "objectives" in calls[1][2].content, "assistant 带上轮输出"
+        assert "competency" in calls[1][3].content, "user 反馈带具体错误"
+        Path(result["yuwen_content_path"]).unlink()
+
+    def test_gen_content_truncated_output_feedback(self):
+        """finish_reason=length 截断 → 反馈带压缩指令（针对性纠错）。"""
+        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+
+        import asyncio
+        import json as _json
+
+        calls = []
+        mock_gw = MagicMock()
+
+        def _side(msgs, **kw):
+            calls.append(list(msgs))
+            if len(calls) == 1:
+                # 残缺 JSON + length 截断标志
+                return _AsyncIter([
+                    _chunk(delta='{"meta": {"title": "静夜思"'),
+                    _chunk(done=True, finish_reason="length"),
+                ])
+            return _AsyncIter([
+                _chunk(delta=_json.dumps(self.SAMPLE_JSON, ensure_ascii=False)),
+                _chunk(done=True),
+            ])
+
+        mock_gw.stream_chat.side_effect = _side
+        node = _make_gen_content_node(mock_gw, None)
+        result = asyncio.run(node({
+            "yuwen_params": {"title": "静夜思", "grade": 1,
+                             "lesson_type": "古诗词", "textbook": "部编版一年级"},
+        }))
+
+        assert result["yuwen_content_path"], "截断后重试应成功"
+        assert len(calls) == 2
+        assert "截断" in calls[1][3].content, "反馈应说明截断原因并给压缩指令"
+        Path(result["yuwen_content_path"]).unlink()
+
+    def test_gen_content_temperature_escalation(self):
+        """重试温度递增（0.3/0.5/0.7）：打破同温采样的同质失败。"""
+        from devpilot.agenthub.yuwen_skill.graph import _make_gen_content_node
+
+        import asyncio
+
+        temps = []
+        mock_gw = MagicMock()
+
+        def _side(msgs, **kw):
+            temps.append(kw.get("temperature"))
+            return _AsyncIter([_chunk(delta="garbage"), _chunk(done=True)])
+
+        mock_gw.stream_chat.side_effect = _side
+        node = _make_gen_content_node(mock_gw, None)
+        asyncio.run(node({
+            "yuwen_params": {"title": "静夜思", "grade": 1,
+                             "lesson_type": "古诗词", "textbook": "部编版一年级"},
+        }))
+
+        assert temps == [0.3, 0.5, 0.7], f"温度应递增，实际 {temps}"
 
 
 # ======================================================================
@@ -876,6 +979,41 @@ class TestSchema:
             validate(doc)  # 不抛
             got = [el["type"] for el in doc["slides"][0]["elements"]]
             assert got == want_types, f"{slide.get('id')}: {got} != {want_types}"
+
+    def test_normalize_type_naming_variants(self):
+        """类型命名风格变体归一化（线上第三次失败案例 word_card）。
+
+        模型写 word_card/wordCard/WordCard/ruby_line 等命名漂移——
+        同一元素只是写法不同，统一切换连字符小写而非报错重生成。
+        """
+        from devpilot.agenthub.yuwen_skill.scripts.common.schema import normalize, validate
+
+        variants = ["word_card", "wordCard", "WordCard", "WORD-CARD", "Word_Card",
+                    "ruby_line", "rubyLine", "RubyLine"]
+        for v in variants:
+            doc = {
+                "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
+                "slides": [{
+                    "id": "s01", "kind": "cover", "title": "页", "period": 1,
+                    "elements": [{"type": v, "cards": [{"char": "夜", "pinyin": "yè"}]}]
+                    if "word" in v.lower() else
+                    [{"type": v, "text": "床前明月光", "ruby": "chuáng"}],
+                }],
+            }
+            doc = normalize(doc)
+            validate(doc)  # 不抛即通过
+            got = doc["slides"][0]["elements"][0]["type"]
+            want = "word-card" if "word" in v.lower() else "ruby-line"
+            assert got == want, f"{v} → {got}，期望 {want}"
+
+        # 未知类型仍原样保留交 validate 报精确错误（不能静默吞掉新偏差）
+        doc = {
+            "meta": {"title": "静夜思", "grade": 2, "lessonType": "古诗词"},
+            "slides": [{"id": "s01", "kind": "cover", "title": "页", "period": 1,
+                        "elements": [{"type": "mystery_widget"}]}],
+        }
+        doc = normalize(doc)
+        assert doc["slides"][0]["elements"][0]["type"] == "mystery_widget"
 
     def test_normalize_leaves_valid_doc_untouched(self):
         """已合规文档 normalize 后不变（幂等且不误伤）。"""

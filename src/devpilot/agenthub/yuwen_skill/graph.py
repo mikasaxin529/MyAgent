@@ -281,15 +281,23 @@ SYSTEM_GEN_CONTENT = """你是一个小学语文课件内容生成助手。根�
 ## 核心素养
 {curriculum}
 
+## 合法完整示例（结构完全合规，严格模仿其结构）
+{example}
+
 ## 生成要求
-1. 严格按照 schema.md 的 JSON 格式输出
-2. elements[].type 必须在枚举全集内
-3. 每个 objectives[].competency 必须是四素养之一
-4. 内容密度参照学段约束（低段字大图多，高段字稍密）
-5. 精读课按 period 1/2 分两课时，每课时 15-30 页
-6. 输出必须是合法的 JSON 对象（顶层含 version/meta/slides/lessonPlan/handout）
-7. 直接输出 JSON，不要用 markdown 代码块包裹
-8. 确保 JSON 是纯文本，可以被 json.loads 解析"""
+1. 严格按照 schema.md 的 JSON 格式输出，结构对照上面的合法示例
+2. elements[].type 必须在枚举全集内，注意命名：word-card 是连字符（不是 word_card/wordCard），
+   ruby-line、word-card、discussion 等全部用连字符小写
+3. 每页结构：{{ "id": "s01", "kind": "栏目", "title": "页标题", "period": 1, "elements": [ ... ] }}
+   —— slides 用 kind 字段（不是 type）；elements 必须是数组，每个元素含 type
+4. word-card 是一个元素带 cards 数组：{{ "type": "word-card", "cards": [ {{char,pinyin,radical,strokes,strokeOrder,groups,sentence}} ] }}
+5. 每个 objectives[].competency 必须是四素养之一
+6. 内容密度参照学段约束（低段字大图多，高段字稍密）
+7. 精读课按 period 1/2 分两课时，每课时 15-30 页；每页 2-6 个元素，
+   文字精炼（生成内容必须控制在长度上限内完整输出，宁可精简不可截断）
+8. 输出必须是合法的 JSON 对象（顶层含 version/meta/slides/lessonPlan/handout）
+9. 直接输出 JSON，不要用 markdown 代码块包裹
+10. 确保 JSON 是纯文本，可以被 json.loads 解析"""
 
 
 def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None):
@@ -309,12 +317,17 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
         lesson_types_text = _read_ref("lesson-types.md")
         stages_text = _read_ref("stages.md")
         curriculum_text = _read_ref("curriculum.md")
+        # few-shot：完整合法示例（结构标杆）。模型模仿现成结构远比读
+        # schema 描述可靠——线上三连失败（type='text'/'word_card'/elements
+        # 非数组）全是"格式理解偏差"，示例直接消除这类偏差。
+        example_text = _read_ref("examples/jingyesi.json")
 
         system_prompt = SYSTEM_GEN_CONTENT.format(
             stages=stages_text,
             lesson_types=lesson_types_text,
             schema=schema_text,
             curriculum=curriculum_text,
+            example=example_text,
         )
 
         user_prompt = (
@@ -326,15 +339,24 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
             f"直接输出合法的 JSON 对象。"
         )
 
-        # 尝试生成（最多两次）
+        # 反思重试：失败时把"错误 + 上轮输出片段"以 assistant+user 消息
+        # 反馈给模型重新生成（而非原样重掷骰子——温度相同的两次采样
+        # 大概率复现同一类结构偏差）。反馈保留在 messages 里跨轮累积：
+        # 第 2 次失败时模型能看到全部历史错误，越改越准。
+        max_attempts = 3
+        feedback_msgs: list[ChatMessage] = []
         content = ""
-        for attempt in range(2):
+        doc: dict | None = None
+        last_error = ""
+        for attempt in range(max_attempts):
             content = ""
+            finish_reason = ""
             try:
+                llm_msgs = [ChatMessage("system", system_prompt),
+                            ChatMessage("user", user_prompt)] + feedback_msgs
                 async for chunk in gateway.stream_chat(
-                    [ChatMessage("system", system_prompt),
-                     ChatMessage("user", user_prompt)],
-                    temperature=0.4,
+                    llm_msgs,
+                    temperature=0.3 + 0.2 * attempt,
                 ):
                     if chunk.delta:
                         content += chunk.delta
@@ -350,8 +372,10 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
                             "phase": "reasoning",
                             "delta": chunk.reasoning,
                         })
+                    if chunk.done and chunk.finish_reason:
+                        finish_reason = chunk.finish_reason
             except Exception as exc:
-                if attempt == 0:
+                if attempt < max_attempts - 1:
                     _emit(emitter, {
                         "type": "token",
                         "delta": f"\n[重试] 生成失败：{exc}，正在重试...\n",
@@ -369,18 +393,20 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
 
             # 尝试解析 JSON
             doc = None
+            parse_error = ""
             try:
                 # 尝试直接解析
                 doc = json.loads(content)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                parse_error = str(e)
                 # 尝试提取 markdown 代码块中的 JSON
                 import re
                 m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
                 if m:
                     try:
                         doc = json.loads(m.group(1))
-                    except json.JSONDecodeError:
-                        pass
+                    except json.JSONDecodeError as e2:
+                        parse_error = str(e2)
             if doc is None:
                 # 尝试从第一个 { 到最后一个 }
                 start = content.find("{")
@@ -388,16 +414,36 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
                 if start >= 0 and end > start:
                     try:
                         doc = json.loads(content[start:end + 1])
-                    except json.JSONDecodeError:
-                        pass
+                    except json.JSONDecodeError as e3:
+                        parse_error = str(e3)
 
             if doc is None:
-                if attempt == 0:
+                if attempt < max_attempts - 1:
+                    # 截断是 JSON 解析失败的高频根因：finish_reason=="length"
+                    # 说明输出被 max_tokens 硬截断，残缺 JSON 无法修复，
+                    # 反馈要带针对性指令（压缩篇幅），而非只报语法错误。
+                    truncated = finish_reason == "length"
                     _emit(emitter, {
                         "type": "token",
-                        "delta": "\n[JSON 解析失败，正在重试...]\n",
+                        "delta": "\n[输出被截断，正在精简重新生成...]\n"
+                                 if truncated else
+                                 "\n[JSON 解析失败，正在带着错误反馈重新生成...]\n",
                         "step_id": "gen_content",
                     })
+                    if truncated:
+                        retry_hint = (
+                            "上一轮输出因超出长度上限被截断，JSON 不完整。"
+                            "请重新生成：压缩每页文字密度（每页 2-4 个元素），"
+                            "减少 slides 数量，确保输出完整的 JSON 对象。"
+                        )
+                    else:
+                        retry_hint = (
+                            f"上一轮输出不是合法 JSON（错误：{parse_error}）。"
+                            f"请严格检查：不要用 markdown 代码块包裹，不要输出任何"
+                            f"JSON 以外的文字，确保引号/括号完整配对。重新生成完整的 JSON 对象。"
+                        )
+                    feedback_msgs.append(ChatMessage("assistant", content[-2000:]))
+                    feedback_msgs.append(ChatMessage("user", retry_hint))
                     continue
                 _step(emitter, "gen_content", "生成课件 JSON", "error", "JSON 解析失败")
                 return {
@@ -416,21 +462,44 @@ def _make_gen_content_node(gateway: Any, emitter: Callable[[dict], None] | None)
                 # 校验通过
                 break
             except SchemaError as e:
-                if attempt == 0:
+                last_error = str(e)
+                if attempt < max_attempts - 1:
                     _emit(emitter, {
                         "type": "token",
-                        "delta": f"\n[schema 校验失败：{e}，正在重试...]\n",
+                        "delta": f"\n[schema 校验失败：{e}，正在带着错误反馈重新生成...]\n",
                         "step_id": "gen_content",
                     })
+                    feedback_msgs.append(ChatMessage("assistant", content[-3000:]))
+                    feedback_msgs.append(ChatMessage(
+                        "user",
+                        f"上一轮输出未通过 schema 校验，错误：{e}\n"
+                        f"请修正上述错误重新生成。重点检查：\n"
+                        f"- elements[].type 必须用合法枚举值（word-card 连字符，"
+                        f"不是 word_card）\n"
+                        f"- slides 用 kind 字段（不是 type）\n"
+                        f"- elements 必须是数组\n"
+                        f"严格模仿 system 提示中《静夜思》示例的结构。"
+                    ))
                     continue
-                _step(emitter, "gen_content", "生成课件 JSON", "error", str(e))
+                _step(emitter, "gen_content", "生成课件 JSON", "error", last_error)
                 return {
                     "yuwen_content": {},
                     "yuwen_content_path": "",
-                    "yuwen_error": f"课件 JSON schema 校验失败：{e}",
-                    "final_answer": f"课件 JSON schema 校验失败：{e}",
+                    "yuwen_error": f"课件 JSON schema 校验失败：{last_error}",
+                    "final_answer": f"课件 JSON schema 校验失败：{last_error}",
                     "nodes_visited": visited,
                 }
+        else:
+            # for 循环自然耗尽（无 break）——理论上不可达：三种失败路径
+            # 均在末次尝试直接 return。防御性兜底。
+            _step(emitter, "gen_content", "生成课件 JSON", "error", last_error or "生成失败")
+            return {
+                "yuwen_content": {},
+                "yuwen_content_path": "",
+                "yuwen_error": f"课件 JSON schema 校验失败：{last_error}",
+                "final_answer": f"课件 JSON schema 校验失败：{last_error}",
+                "nodes_visited": visited,
+            }
 
         # 写入临时 JSON 文件
         session = _session_name(params)
