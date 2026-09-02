@@ -1,10 +1,12 @@
 """gen_images 节点：AI 生图回填空 src 的 image / scene-strip 元素（可选增强）。
 
 无 DASHSCOPE_API_KEY → 直接跳过。有 key → asyncio.Semaphore(3) 并发生图，
-成功落盘 assets/{page_id}_{i}.png 并把 el["src"] 写成**相对 session 目录**
-路径（渲染器由 renderer agent 适配解析——帧/路径契约见 graph.py docstring）。
-任何失败都降级为占位（src 留空），绝不 raise。
-改过 doc 后必须重写 tmp_content.json——render 读的是盘。
+成功落盘 assets/{page_id}_{i}.jpg（PIL 压到长边 ≤1600px，防 PPTX 体积
+爆炸）并把 el["src"] 写成**相对 session 目录**路径（渲染器由 renderer
+agent 适配解析——帧/路径契约见 graph.py docstring）。
+任何失败都降级（src 留空），绝不 raise。收尾统一删除未生成图的空 src
+image 元素——渲染器对空 src 回退"🖼 插图"灰块占位面板，用户选了不配图
+或生图失败时灰块突兀。改过 doc 后必须重写 tmp_content.json——render 读的是盘。
 
 配图风格与数量由 yuwen_params 控制（extract_params 首轮抽取 / confirm
 确认轮改配图，缺省走默认）：
@@ -48,6 +50,71 @@ DEFAULT_IMAGE_STYLE = "绘本"
 DEFAULT_IMAGE_COUNT = "minimal"
 IMAGE_COUNTS = ("minimal", "all", "none")
 _COUNT_LABELS = {"minimal": "最少配图", "all": "全部配图", "none": "不配图"}
+
+
+_IMG_MAX_EDGE = 1600  # 落盘长边上限：1024px 生图原图 ~2MB/张，多张会把 PPTX 撑爆
+
+
+def _compress_image(data: bytes, max_edge: int = _IMG_MAX_EDGE) -> tuple[bytes, str]:
+    """生图落盘前压成 JPEG（长边 ≤max_edge，q85）。返回 (bytes, 扩展名)。
+
+    AI 生图无透明通道，RGB 转 JPEG 目视无损且体积约降到 1/4；
+    渲染器 add_picture 按文件内容嗅探格式，扩展名跟着实走。
+    PIL 缺失/解码失败回退原始 bytes + png（功能优先于体积）。
+    """
+    try:
+        import io
+
+        from PIL import Image as PILImage
+        im = PILImage.open(io.BytesIO(data))
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        w, h = im.size
+        if max(w, h) > max_edge:
+            scale = max_edge / max(w, h)
+            im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))),
+                           PILImage.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=85, optimize=True)
+        return buf.getvalue(), "jpg"
+    except Exception:  # noqa: BLE001 - 压缩失败走原图
+        return data, "png"
+
+
+def _prune_empty_images(slides: list[dict]) -> int:
+    """删除空 src 的普通 image 元素（未生图/生图失败/用户不配图），返回删除数。
+
+    渲染器对空 src 回退"🖼 插图"灰块占位面板——不配图或失败时灰块突兀，
+    删掉元素让正文自然涨满版面。豁免面：
+    - background 全出血图：封面入口对无图有 on_image=False 主题底色兜底，不灰；
+    - scene-strip：src 缺失时分格线与 caption 照常渲染，四段情节有教学价值；
+    - 删空后无元素的页保留原样（elements 为空过不了 validate，灰块次之）。
+    """
+    removed = 0
+    for page in slides:
+        els = page.get("elements")
+        if not isinstance(els, list) or len(els) < 2:
+            continue
+        keep = [el for el in els
+                if not (isinstance(el, dict)
+                        and el.get("type") == "image"
+                        and not el.get("background")
+                        and not str(el.get("src") or "").strip())]
+        if keep and len(keep) < len(els):
+            page["elements"] = keep
+            removed += len(els) - len(keep)
+    return removed
+
+
+def _rewrite_content(doc: dict, params: dict) -> None:
+    """把 doc 写回 tmp_content.json——render 子进程读盘，改动必须落进去。"""
+    try:
+        tmp_path = _content_path(params)
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+    except Exception:  # noqa: BLE001 - 落盘失败不炸管线（渲染读旧盘仍可出片）
+        pass
 
 
 def _resolve_image_options(params: dict) -> tuple[str, str]:
@@ -129,7 +196,12 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
         style, count = _resolve_image_options(params)
 
         if count == "none":
-            _step(emitter, "gen_images", "AI 配图", "done", "用户选择不配图")
+            removed = _prune_empty_images(slides)
+            if removed:
+                _rewrite_content(doc, params)
+            _step(emitter, "gen_images", "AI 配图", "done",
+                  "用户选择不配图" + (f"（清理 {removed} 个插图占位）"
+                                      if removed else ""))
             return {"yuwen_content": doc, "nodes_visited": visited}
 
         # 收集待配图元素：(page, element, 元素在该页的序号)。
@@ -196,9 +268,13 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
         from ..imagegen import ImageGen
         gen = ImageGen()
         if not gen.available:
-            _step(emitter, "gen_images", "AI 配图", "done",
-                  f"未配置 DASHSCOPE_API_KEY，跳过 AI 配图"
-                  f"（{len(targets)} 张走占位）")
+            removed = _prune_empty_images(slides)
+            if removed:
+                _rewrite_content(doc, params)
+            detail = "未配置 DASHSCOPE_API_KEY，跳过 AI 配图"
+            if removed:
+                detail += f"（清理 {removed} 个插图占位）"
+            _step(emitter, "gen_images", "AI 配图", "done", detail)
             return {"yuwen_content": doc, "nodes_visited": visited}
 
         _step(emitter, "gen_images", "AI 配图", "running",
@@ -220,7 +296,8 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
                 try:
                     data = await gen.generate(_image_prompt(el, page, meta,
                                                             style))
-                    fname = f"{page_id}_{i}.png"
+                    data, ext = _compress_image(data)
+                    fname = f"{page_id}_{i}.{ext}"
                     (assets_dir / fname).write_bytes(data)
                     # src = 相对 session 目录路径（正斜杠，跨平台一致）；
                     # 渲染器据此拼绝对路径（契约同步 renderer agent）。
@@ -233,19 +310,18 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
         await asyncio.gather(*(_one(p, e, i) for p, e, i in targets),
                              return_exceptions=True)
 
-        # 重写 tmp_content.json——render 子进程读盘，src 必须落进去
+        # 未选中（minimal 截断）/ 生图失败的普通 image 元素 src 仍为空，
+        # 渲染会回退灰块占位——删除后再落盘；重写 tmp_content.json，
+        # render 子进程读盘，src 与删除都必须落进去。
         doc["slides"] = slides
-        try:
-            tmp_path = _content_path(params)
-            tmp_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2),
-                                encoding="utf-8")
-        except Exception:  # noqa: BLE001
-            pass
+        removed = _prune_empty_images(slides)
+        _rewrite_content(doc, params)
 
         detail = (f"{style}风格，{_COUNT_LABELS[count]}："
                   f"{len(targets)}/{total_candidates} 张候选，"
-                  f"成功 {ok} 张 / 失败 {fail} 张（走占位）")
+                  f"成功 {ok} 张 / 失败 {fail} 张")
+        if removed:
+            detail += f"，清理 {removed} 个插图占位"
         if skipped:
             detail += f"，另有 {skipped} 张候选未生成（走占位）"
         _step(emitter, "gen_images", "AI 配图", "done", detail)

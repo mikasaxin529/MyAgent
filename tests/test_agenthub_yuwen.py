@@ -113,9 +113,13 @@ REVIEW_PASS = {"scores": {"structure": 5, "pedagogy": 4, "content": 4,
                "issues": [], "pass": True}
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def outputs_tmp(tmp_path, monkeypatch):
-    """把 state._OUTPUTS_DIR patch 到 tmp_path（所有盘读写经模块全局查找）。"""
+    """把 state._OUTPUTS_DIR patch 到 tmp_path（所有盘读写经模块全局查找）。
+
+    autouse：extract 询问轮/路由查盘成为常态后，不隔离的测试会读到仓库
+    outputs/ 的真实 state.json（用户历史会话残留），结果随磁盘状态漂移。
+    """
     from aidraft.agenthub.yuwen import state as st
     monkeypatch.setattr(st, "_OUTPUTS_DIR", tmp_path)
     return tmp_path
@@ -936,6 +940,7 @@ class TestGenImages:
                 "lessonPlan": {}, "handout": {"levels": []}}
 
     def test_no_key_skips(self, outputs_tmp):
+        """无 key → 不生图；多元素页的空 src image 被清理，孤元素页豁免。"""
         from aidraft.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
         doc = self._doc_with_images()
         fake_cls = MagicMock()
@@ -945,7 +950,11 @@ class TestGenImages:
         with patch("aidraft.agenthub.yuwen.imagegen.ImageGen", fake_cls):
             result = asyncio.run(node({"yuwen_params": PARAMS,
                                        "yuwen_content": doc}))
-        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
+        slides = result["yuwen_content"]["slides"]
+        # s01（heading+image 两元素）：空 image 删除，正文不留灰块
+        assert [e["type"] for e in slides[0]["elements"]] == ["heading"]
+        # s02 唯一元素就是空 image：删光会让页面无元素（validate 报错），保留
+        assert slides[1]["elements"][0]["src"] == ""
         done = [f for f in frames if f.get("status") == "done"]
         assert any("DASHSCOPE_API_KEY" in f.get("detail", "") for f in done)
 
@@ -990,8 +999,8 @@ class TestGenImages:
         assert any("月夜意境图" in p and "静夜思" in p for p in prompts)
         assert any("李白像" in p for p in prompts)
 
-    def test_generate_failure_placeholder(self, outputs_tmp):
-        """生图失败 → src 留空走占位，不 raise。"""
+    def test_generate_failure_pruned_not_gray(self, outputs_tmp):
+        """生图失败 → 多元素页的空 src image 被删除（渲染不留灰块），不 raise。"""
         from aidraft.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
         doc = self._doc_with_images()
         fake_gen = MagicMock()
@@ -1002,7 +1011,10 @@ class TestGenImages:
         with patch("aidraft.agenthub.yuwen.imagegen.ImageGen", fake_cls):
             result = asyncio.run(node({"yuwen_params": PARAMS,
                                        "yuwen_content": doc}))
-        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
+        slides = result["yuwen_content"]["slides"]
+        assert [e["type"] for e in slides[0]["elements"]] == ["heading"]
+        # 孤元素页豁免（删光过不了 validate）——src 留空由渲染兜底
+        assert slides[1]["elements"][0]["src"] == ""
 
     def test_style_injected_into_prompt(self, outputs_tmp):
         """image_style=水彩 → prompt 含水彩风格短语。"""
@@ -1176,7 +1188,7 @@ class TestGenImages:
         assert fake_gen.generate.await_count == 4
 
     def test_none_skips_generation(self, outputs_tmp):
-        """image_count=none → 直接跳过，不调网关。"""
+        """image_count=none → 不调网关，且清理空 src 占位（用户明说不配图）。"""
         from aidraft.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
         doc = self._doc_with_images()
         fake_gen = MagicMock()
@@ -1187,7 +1199,9 @@ class TestGenImages:
         result = asyncio.run(node({"yuwen_params": {**PARAMS,
                                                     "image_count": "none"},
                                    "yuwen_content": doc}))
-        assert result["yuwen_content"]["slides"][0]["elements"][1]["src"] == ""
+        slides = result["yuwen_content"]["slides"]
+        assert [e["type"] for e in slides[0]["elements"]] == ["heading"]
+        assert slides[1]["elements"][0]["src"] == ""  # 孤元素页豁免
         fake_gen.generate.assert_not_awaited()
         done = [f for f in frames if f.get("status") == "done"]
         assert any("不配图" in f.get("detail", "") for f in done)
@@ -1217,6 +1231,68 @@ class TestGenImages:
             "https://dashscope.aliyuncs.com/"
         ).endswith("/api/v1/services/aigc/multimodal-generation/generation")
 
+    def test_compress_image_resizes_to_jpeg(self):
+        """2048px PNG → 长边 ≤1600 JPEG（体积显著下降，扩展名跟着实走）。"""
+        import io
+
+        from PIL import Image as PILImage
+        from aidraft.agenthub.yuwen.nodes.gen_images import _compress_image
+        buf = io.BytesIO()
+        PILImage.new("RGB", (2048, 1536), (30, 60, 90)).save(buf, format="PNG")
+        data, ext = _compress_image(buf.getvalue())
+        assert ext == "jpg"
+        im = PILImage.open(io.BytesIO(data))
+        assert max(im.size) <= 1600
+        assert im.format == "JPEG"
+        assert len(data) < len(buf.getvalue())
+
+    def test_compress_image_keeps_small_undersized(self):
+        """1024px 原图（≤上限）只转码不放大；非 RGB（带 alpha）也能压。"""
+        import io
+
+        from PIL import Image as PILImage
+        from aidraft.agenthub.yuwen.nodes.gen_images import _compress_image
+        buf = io.BytesIO()
+        PILImage.new("RGBA", (1024, 1024), (200, 30, 30, 128)).save(
+            buf, format="PNG")
+        data, ext = _compress_image(buf.getvalue())
+        assert ext == "jpg"
+        im = PILImage.open(io.BytesIO(data))
+        assert im.size == (1024, 1024)
+
+    def test_compress_image_garbage_falls_back(self):
+        """非图片字节 → 回退原始 bytes + png（压缩失败不炸生图链路）。"""
+        from aidraft.agenthub.yuwen.nodes.gen_images import _compress_image
+        data, ext = _compress_image(b"not an image at all")
+        assert data == b"not an image at all" and ext == "png"
+
+    def test_prune_empty_images_rules(self):
+        """删除规则：多元素页空 image 删；background/孤元素页/已回填不碰。"""
+        from aidraft.agenthub.yuwen.nodes.gen_images import _prune_empty_images
+        doc = {"slides": [
+            # s01：heading + 空 image → image 删除
+            {"id": "s01", "elements": [
+                {"type": "heading", "content": "t"},
+                {"type": "image", "src": "", "caption": "c"}]},
+            # s02：唯一元素是空 image → 豁免（删光过不了 validate）
+            {"id": "s02", "elements": [{"type": "image", "src": ""}]},
+            # s03：空 background image（封面全出血）→ 豁免（渲染有底色兜底）
+            {"id": "s03", "elements": [
+                {"type": "heading", "content": "t"},
+                {"type": "image", "src": "", "background": True}]},
+            # s04：有 src 的 image 与非 image 类型 → 原样保留
+            {"id": "s04", "elements": [
+                {"type": "image", "src": "assets/a.jpg"},
+                {"type": "scene-strip", "src": ""},
+                {"type": "paragraph", "content": "p"}]},
+        ]}
+        removed = _prune_empty_images(doc["slides"])
+        assert removed == 1
+        assert [e["type"] for e in doc["slides"][0]["elements"]] == ["heading"]
+        assert len(doc["slides"][1]["elements"]) == 1
+        assert len(doc["slides"][2]["elements"]) == 2
+        assert len(doc["slides"][3]["elements"]) == 3
+
 
 # ======================================================================
 # 11. extract_params 节点（沿用）
@@ -1231,8 +1307,9 @@ class TestExtractParams:
         mock_gw = MagicMock()
         mock_gw.chat.return_value = _chat_response(json.dumps({
             "title": "静夜思", "grade": 1, "lesson_type": "古诗词",
-            "textbook": "部编版一年级下册", "params_ready": True,
-            "question": "", "chips": [],
+            "textbook": "部编版一年级下册",
+            "image_style": "绘本", "image_count": "minimal",
+            "params_ready": True, "question": "", "chips": [],
         }, ensure_ascii=False))
 
         frames = []
@@ -1317,6 +1394,102 @@ class TestExtractParams:
         assert result["yuwen_params"]["image_style"] == "抽象派"
         # 数量档仍是三档枚举：非法值丢弃
         assert "image_count" not in result["yuwen_params"]
+
+    def _extract_node(self, mock_gw):
+        from aidraft.agenthub.yuwen.nodes.extract_params import \
+            _make_extract_params_node
+        return _make_extract_params_node(mock_gw, None)
+
+    def _params_ready_json(self, **extra):
+        base = {"title": "静夜思", "grade": 1, "lesson_type": "古诗词",
+                "textbook": "部编版", "params_ready": True,
+                "question": "", "chips": []}
+        base.update(extra)
+        return json.dumps(base, ensure_ascii=False)
+
+    def test_image_ask_round(self, outputs_tmp):
+        """齐参数但没提配图 → 不直接放行：追问一轮 + 盘上记询问标记。"""
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(self._params_ready_json())
+        frames = []
+        from aidraft.agenthub.yuwen.nodes.extract_params import \
+            _make_extract_params_node
+        node = _make_extract_params_node(mock_gw, lambda f: frames.append(f))
+        result = asyncio.run(node({
+            "task": "静夜思 一年级 古诗词",
+            "user_message": "静夜思 一年级 古诗词", "messages": []}))
+
+        assert result["yuwen_params_ready"] is False
+        assert "配图" in result["final_answer"]
+        content = [f for f in frames if f.get("type") == "content"]
+        assert content and "配图" in content[0]["delta"]
+        assert content[0].get("chips")  # 快捷选项带着
+        # 防循环标记落盘
+        from aidraft.agenthub.yuwen.state import _load_state
+        disk = _load_state(PARAMS)
+        assert disk.get("yuwen_image_asked") is True
+        # params 已落盘：下一轮 _route_after_params 查盘判缺 prefs → END 等回复
+
+    def test_image_ask_second_round_passes_even_default(self, outputs_tmp):
+        """第二轮回"默认"没抽到偏好 → 放行（问过就绝不二次追问）。"""
+        from aidraft.agenthub.yuwen.state import _save_state
+        _save_state(PARAMS, yuwen_params=PARAMS, yuwen_image_asked=True)
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(self._params_ready_json())
+        node = self._extract_node(mock_gw)
+        result = asyncio.run(node({
+            "task": "默认", "user_message": "默认", "messages": []}))
+        assert result["yuwen_params_ready"] is True
+
+    def test_image_ask_reply_not_routed_to_confirm(self, outputs_tmp):
+        """询问轮回"不要配图"（含大纲指令词 _IMAGE_WORDS）：research 未跑、
+        盘上无 outline → _find_pending_session 无从命中，仍走 extract_params
+        第二轮放行，不会被 confirm 兜底劫持。"""
+        from aidraft.agenthub.yuwen import graph as gr
+        from aidraft.agenthub.yuwen.state import _save_state
+        _save_state(PARAMS, yuwen_params=PARAMS, yuwen_image_asked=True)
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            self._params_ready_json(image_count="none"))
+        node = self._extract_node(mock_gw)
+        result = asyncio.run(node({
+            "task": "不要配图", "user_message": "不要配图", "messages": []}))
+        assert result["yuwen_params_ready"] is True
+        assert result["yuwen_params"]["image_count"] == "none"
+        # 放行后路由：盘上无大纲 → research（正常首轮），不是 confirm
+        with patch("aidraft.agenthub.yuwen.graph._find_pending_session",
+                   return_value=None):
+            got = gr._route_after_params({
+                "yuwen_params_ready": True,
+                "yuwen_params": result["yuwen_params"]})
+        assert got == "research"
+
+    def test_image_ask_second_round_merges_disk_prefs(self, outputs_tmp):
+        """第二轮用户答"水彩" → 本轮抽取值 + 盘上旧 params 合并放行。"""
+        from aidraft.agenthub.yuwen.state import _save_state
+        _save_state(PARAMS, yuwen_params=PARAMS, yuwen_image_asked=True)
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            self._params_ready_json(image_style="水彩"))
+        node = self._extract_node(mock_gw)
+        result = asyncio.run(node({
+            "task": "水彩", "user_message": "水彩", "messages": []}))
+        assert result["yuwen_params_ready"] is True
+        assert result["yuwen_params"]["image_style"] == "水彩"
+
+    def test_image_ask_skipped_when_prefs_present(self, outputs_tmp):
+        """首轮就说了偏好 → 不触发询问轮，直接放行。"""
+        mock_gw = MagicMock()
+        mock_gw.chat.return_value = _chat_response(
+            self._params_ready_json(image_style="国风", image_count="all"))
+        node = self._extract_node(mock_gw)
+        result = asyncio.run(node({
+            "task": "静夜思 一年级 古诗词 国风全配",
+            "user_message": "静夜思 一年级 古诗词 国风全配", "messages": []}))
+        assert result["yuwen_params_ready"] is True
+        assert result["yuwen_params"]["image_count"] == "all"
+        from aidraft.agenthub.yuwen.state import _load_state
+        assert not _load_state(PARAMS).get("yuwen_image_asked")
 
 
 # ======================================================================
@@ -1640,7 +1813,9 @@ class TestGraphIntegration:
                 return _chat_response(json.dumps({
                     "title": PARAMS["title"], "grade": PARAMS["grade"],
                     "lesson_type": PARAMS["lesson_type"],
-                    "textbook": PARAMS["textbook"], "params_ready": True,
+                    "textbook": PARAMS["textbook"],
+                    "image_style": "绘本", "image_count": "minimal",
+                    "params_ready": True,
                     "question": "", "chips": []}, ensure_ascii=False))
             if "教研助手" in system:
                 return _chat_response(json.dumps(PLAN_JSON, ensure_ascii=False))
@@ -1694,7 +1869,9 @@ class TestGraphIntegration:
                 return _chat_response(json.dumps({
                     "title": PARAMS["title"], "grade": PARAMS["grade"],
                     "lesson_type": PARAMS["lesson_type"],
-                    "textbook": PARAMS["textbook"], "params_ready": True,
+                    "textbook": PARAMS["textbook"],
+                    "image_style": "绘本", "image_count": "minimal",
+                    "params_ready": True,
                     "question": "", "chips": []}, ensure_ascii=False))
             return _chat_response(json.dumps(SAMPLE_OUTLINE, ensure_ascii=False))
 

@@ -3,6 +3,8 @@
 评分维度：structure/pedagogy/content/stage_fit 各 1-5 分。
 pass 规则：LLM 判定（无 issues 且均分 ≥4）。发 review 帧供前端评分卡展示。
 抽查页用 random.seed(42) 固定——测试可重现，且同一 doc 重评结果稳定。
+审查结果同步落盘 state.json（yuwen_review）——帧是瞬间的、盘是持久的，
+线上问题复盘时不再"查无记录"。
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from ..state import (
     YuwenState,
     _emit,
     _parse_llm_json,
+    _save_state,
     _step,
 )
 from ._page import _call_llm
@@ -125,8 +128,10 @@ def _make_review_node(gateway: Any, emitter: Callable[[dict], None] | None,
             # 无内容可审：视为 pass 直接放行（gen_slides 全失败的情况由
             # yuwen_error 在 report 里体现，不在这阻断）
             _step(emitter, "review", "AI 质量审查", "done", "无内容，跳过审查")
-            return {"yuwen_review": {"scores": {}, "issues": [], "pass": True},
-                    "nodes_visited": visited}
+            skipped = {"scores": {}, "issues": [], "pass": True}
+            _save_state(state.get("yuwen_params") or {},
+                        yuwen_review=skipped)
+            return {"yuwen_review": skipped, "nodes_visited": visited}
 
         system_prompt = SYSTEM_REVIEW.format(
             structure_report=_structure_report(doc),
@@ -167,6 +172,8 @@ def _make_review_node(gateway: Any, emitter: Callable[[dict], None] | None,
                   f"（第 {rounds + 1} 轮）")
 
         _emit(emitter, {"type": "review", "review": review_result})
+        _save_state(state.get("yuwen_params") or {},
+                    yuwen_review=review_result)
         return {"yuwen_review": review_result, "nodes_visited": visited}
 
     return review

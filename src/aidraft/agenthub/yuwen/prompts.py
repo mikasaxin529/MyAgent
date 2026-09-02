@@ -209,6 +209,13 @@ SYSTEM_GEN_SLIDE = """你是小学语文课件单页内容生成助手。根据�
 - kind=toc 目录页：固定 2 个元素——左图栏 + 两列条目，宁少勿多：
   {{"type":"image","src":"","caption":"栏目配图意境图"}},
   {{"type":"list","items":["学习目标","情境导入","生字朋友","初读节奏","诗意解析","闯关练习"],"ordered":false}}
+  —— items 必须是**本课大纲里的实际栏目**（按上面大纲的页标题顺序列出，
+  封面/目录页自身不算条目），不要照抄示例的六个词；image 的 src="" 是
+  生图管线回填占位，没有 AI 配图时管线会自动删除该元素，照常输出即可
+- kind=read-rhythm 初读节奏页：整首诗用**一个 poem 元素**承载
+  （stanzas[].lines[] 每行带 text+ruby，对照示例 s03 的写法），
+  **绝不要按句拆成多个 ruby-line 元素**——拆行会让每句缩成一小条、
+  字号骤降不可读；ruby-line 只用于单独一句的停顿示范
 - kind=challenge 闯关练习页：一个 challenge 元素带 1-2 关：
   {{"type":"challenge","items":[
     {{"stage":"第一关","title":"填一填","question":"床前明月□，疑是地上□","answer":"光/霜","hint":"想一想诗人看到了什么"}},

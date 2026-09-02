@@ -307,18 +307,37 @@ def _footer(slide, meta, page_no, total, color=None):
 
 
 # ---- Pillow 预渲染：注音行 / 田字格 ----
+# 超采样系数：字号按 pt 语义画（1pt≈1px）再以 96dpi 嵌入会小 25% 且发虚，
+# 统一 4x 画、嵌入侧除回，字形边缘干净。
+_RUBY_SS = 4
+# 短行判定与单行高度上限（英寸）：跟读页通常 3-5 行，超上限会挤掉
+# 页尾要素（_render_content 到 MAX_Y 直接 break）
+_RUBY_SHORT_LEN = 8
+_RUBY_CAP = 1.05
+_RUBY_CAP_BIG = 1.3
+
+
 def _render_ruby_png(text, pinyin_str, stage, big=False):
-    """整行注音 → PNG bytes。Pillow 画拼音(小)+汉字(大)两行。"""
+    """整行注音 → PNG bytes。Pillow 画拼音(小)+汉字(大)两行（4x 超采样）。
+
+    未标 big 的短行（五言/七言诗单句这类）自动升级 bigchar 字号——
+    注音行典型用途就是诗句跟读，用 body 字号嵌出来小得没法看。
+    """
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
         return None
+    ss = _RUBY_SS
     pairs = py.split_syllables(text, pinyin_str)
+    if not big and 0 < len(pairs) <= _RUBY_SHORT_LEN:
+        big = True
     char_sz = T.font_for(stage, "bigchar" if big else "body") + (8 if big else 0)
     py_sz = T.font_for(stage, "pinyin")
-    pad = 10
-    cell_w = char_sz + 18
-    w = max(cell_w * len(pairs) + pad * 2, 200)
+    char_sz *= ss
+    py_sz *= ss
+    pad = 10 * ss
+    cell_w = char_sz + 18 * ss
+    w = max(cell_w * len(pairs) + pad * 2, 200 * ss)
     h = py_sz + char_sz + pad * 3
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -330,7 +349,7 @@ def _render_ruby_png(text, pinyin_str, stage, big=False):
         bw = draw.textlength(s, font=pf) if pf else len(s) * py_sz
         draw.text((x + (cell_w - bw) / 2, pad), s, fill=color, font=pf)
         cw = draw.textlength(c, font=cf) if cf else char_sz
-        draw.text((x + (cell_w - cw) / 2, pad + py_sz + 6), c,
+        draw.text((x + (cell_w - cw) / 2, pad + py_sz + 6 * ss), c,
                   fill="#" + T.PAL.TITLE_TEXT, font=cf)
         x += cell_w
     buf = io.BytesIO()
@@ -1026,7 +1045,8 @@ def _place_quote(slide, el, top, stage):
 
 
 def _place_ruby_line(slide, el, top, stage):
-    """整行注音：Pillow PNG 居中。"""
+    """整行注音：Pillow PNG 居中。短行（五言诗单句等）拉伸到满栏宽——
+    诗句页要的就是"大字跟读"，留 2 英寸小条等于没法看。"""
     png = _render_ruby_png(el.get("text", ""), el.get("ruby", ""), stage,
                            big=bool(el.get("big")))
     if png:
@@ -1034,10 +1054,16 @@ def _place_ruby_line(slide, el, top, stage):
         try:
             iw, ih = PILImage.open(io.BytesIO(_png_bytes(png))).size
         except Exception:
-            iw, ih = 1200, 200
+            iw, ih = 1200 * _RUBY_SS, 200 * _RUBY_SS
         max_w = 13.333 - 2 * T.L.MARGIN_X
-        w_in = min(max_w, iw / 96)
+        natural = iw / (96 * _RUBY_SS)
+        w_in = max_w if natural >= max_w * 0.6 else max_w
         h_in = w_in * ih / iw
+        cap = _RUBY_CAP_BIG if el.get("big") or len(el.get("text") or "") <= 8 \
+            else _RUBY_CAP
+        if h_in > cap:  # 封顶：等比缩宽，杜绝一行吃掉大半页
+            w_in = w_in * cap / h_in
+            h_in = cap
         x = inch((13.333 - w_in) / 2)
         slide.shapes.add_picture(io.BytesIO(_png_bytes(png)), int(x), int(top),
                                  width=inch(w_in), height=inch(h_in))
@@ -1072,8 +1098,8 @@ def _place_poem(slide, el, top, stage):
                 try:
                     iw, ih = PILImage.open(io.BytesIO(_png_bytes(png))).size
                 except Exception:
-                    iw, ih = 900, 200
-                w_in = min(8.0, iw / 135)
+                    iw, ih = 900 * _RUBY_SS, 200 * _RUBY_SS
+                w_in = min(8.0, iw / (135 * _RUBY_SS))
                 h_in = w_in * ih / iw
                 rows.append((png, w_in, h_in, line.get("text", "")))
             else:

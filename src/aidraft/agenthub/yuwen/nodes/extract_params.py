@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from ....gateway import ChatMessage
 from ..prompts import SYSTEM_EXTRACT
-from ..state import YuwenState, _emit, _step
+from ..state import YuwenState, _emit, _load_state, _save_state, _step
 
 
 def _normalize_grade(raw: Any) -> int:
@@ -145,12 +145,50 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
         params.update(prefs)
         if session_short:
             params["_session"] = session_short
+
+        # 配图偏好主动询问（用户拍板：收参数时多问一轮，缺省不再静默放行）。
+        # 首轮：参数齐但没提到配图 → 落盘 params + yuwen_image_asked 标记
+        # （防循环：用户回"都行"没抽到偏好也只代表问过，第二轮直接放行），
+        # 追问一轮后进 END 等回复。第二轮：从本轮抽取或盘上旧值合并偏好，
+        # 齐了才真正放行。
+        disk = _load_state(params)
+        asked = bool(disk.get("yuwen_image_asked"))
+        if not (params.get("image_style") or params.get("image_count")):
+            # 本轮没抽到偏好时兜底捡盘上旧值（询问轮落过盘的 image_*）
+            disk_params = disk.get("yuwen_params") or {}
+            for key in ("image_style", "image_count"):
+                if disk_params.get(key):
+                    params[key] = disk_params[key]
+        if not (params.get("image_style") or params.get("image_count")) \
+                and not asked:
+            question = (f"参数已就绪：《{title}》· {grade}年级 · {lesson_type}。"
+                        "配图有什么偏好？\n"
+                        "· 风格：绘本 / 水彩 / 剪纸 / 国风 / 卡通，也可以说任意你喜欢的风格\n"
+                        "· 数量：少量（每课时几张，默认）/ 全配（每页都配）/ 不配\n"
+                        "例如\"水彩，每页都配\"；不想挑就回复\"默认\"。")
+            _save_state(params, yuwen_params=params, yuwen_image_asked=True)
+            _emit(emitter, {"type": "content", "delta": question,
+                            "step_id": "extract_params",
+                            "chips": ["默认（绘本+少量）", "水彩，每页都配",
+                                      "不要配图"]})
+            _step(emitter, "extract_params", "解析参数", "done", "询问配图偏好")
+            return {
+                "yuwen_params": params,
+                "yuwen_params_ready": False,
+                "final_answer": question,
+                "nodes_visited": visited,
+            }
+
         detail = f"《{title}》· {grade}年级 · {lesson_type}"
-        if prefs.get("image_style"):
-            detail += f" · 配图{prefs['image_style']}"
-        if prefs.get("image_count"):
-            detail += f" · {prefs['image_count']}"
+        if params.get("image_style"):
+            detail += f" · 配图{params['image_style']}"
+        if params.get("image_count"):
+            detail += f" · {params['image_count']}"
         _step(emitter, "extract_params", "解析参数", "done", detail)
+        # 询问轮之后盘上的 yuwen_params 是旧值（无偏好）——放行前同步，
+        # 防中断续跑时从盘读到缺省偏好。
+        if asked:
+            _save_state(params, yuwen_params=params)
         return {
             "yuwen_params": params,
             "yuwen_params_ready": True,

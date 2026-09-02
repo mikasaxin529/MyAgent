@@ -38,6 +38,10 @@ _PARAMS_JSON = {
     "grade": 1,
     "lesson_type": "古诗词",
     "textbook": "部编版一年级下册",
+    # 带配图偏好 → extract 不触发询问轮（询问链路单独在
+    # tests/test_agenthub_yuwen.py::TestExtractParams 覆盖）
+    "image_style": "绘本",
+    "image_count": "minimal",
     "params_ready": True,
     "question": "",
     "chips": [],

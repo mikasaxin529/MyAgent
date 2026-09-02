@@ -8,8 +8,10 @@
 soffice / 转换失败 / 整体异常一律发 available=false 降级帧注明原因，
 绝不 raise、绝不阻断 report。单页失败只跳该页。
 
-抽查策略沿用 review.py：页数超 DASHSCOPE_VL_MAX_PAGES（默认 8）时取前
-2 页 + random.Random(42) 随机补齐，确定性可重现。
+抽查策略沿用 review.py：页数超 DASHSCOPE_VL_MAX_PAGES（默认 14——线上一课
+约 13-14 页，默认即全查；缺陷页漏检的直接教训）时取前 2 页 +
+random.Random(42) 随机补齐，确定性可重现。审查结果落盘 state.json
+（yuwen_visual）供跨轮诊断与复盘。
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from ..state import (
     YuwenState,
     _emit,
     _parse_llm_json,
+    _save_state,
     _session_dir,
     _session_name,
     _step,
@@ -75,11 +78,15 @@ def _sample_page_indices(total: int, limit: int) -> list[int]:
 
 
 def _max_pages() -> int:
-    """抽查上限（env DASHSCOPE_VL_MAX_PAGES，默认 8；非法值回退 8）。"""
+    """抽查上限（env DASHSCOPE_VL_MAX_PAGES，默认 14；非法值回退 14）。
+
+    原默认 8：线上一课 13-14 页的课件只查 8 页，用户实测的缺陷页
+    （初读节奏诗句不可读）恰好没被抽中——上调到覆盖整课的规模。
+    """
     try:
-        return max(1, int(os.environ.get("DASHSCOPE_VL_MAX_PAGES", "").strip() or 8))
+        return max(1, int(os.environ.get("DASHSCOPE_VL_MAX_PAGES", "").strip() or 14))
     except ValueError:
-        return 8
+        return 14
 
 
 def _normalize_page_result(parsed, page_id: str):
@@ -150,12 +157,16 @@ def _convert_pptx_to_pdf(soffice: str, pptx: Path, review_dir: Path) -> Path | N
 def _make_visual_review_node(emitter: Callable[[dict], None] | None):
     """visual_review 节点工厂：渲染产物逐页视觉审查，发 visual 帧。"""
 
-    def _degraded(visited: list, reason: str) -> dict:
-        """统一降级出口：available=false + 原因，step done（不阻断管线）。"""
+    def _degraded(visited: list, reason: str, params: dict) -> dict:
+        """统一降级出口：available=false + 原因，step done（不阻断管线）。
+
+        降级结果同样落盘——复盘时"为什么没修"要看得到"审查为什么没跑"。
+        """
         frame = {"available": False, "reason": reason,
                  "score": 0, "pages": [], "issues": []}
         _step(emitter, "visual_review", "视觉审查", "done", reason)
         _emit(emitter, {"type": "visual", "visual": frame})
+        _save_state(params, yuwen_visual=frame)
         return {"yuwen_visual": frame, "nodes_visited": visited}
 
     async def visual_review(state: YuwenState) -> dict:
@@ -179,7 +190,8 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
         try:
             return await _review(state, visited)
         except Exception as exc:  # noqa: BLE001 - 任何整体异常降级，绝不阻断
-            return _degraded(visited, f"视觉审查异常：{str(exc)[:80]}")
+            return _degraded(visited, f"视觉审查异常：{str(exc)[:80]}",
+                             state.get("yuwen_params") or {})
 
     async def _review(state: YuwenState, visited: list) -> dict:
         doc = state.get("yuwen_content") or {}
@@ -188,25 +200,25 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
         from ..vlm import VLMReview
         vlm = VLMReview()
         if not vlm.available:
-            return _degraded(visited, "未配置 DASHSCOPE_API_KEY")
+            return _degraded(visited, "未配置 DASHSCOPE_API_KEY", params)
 
         session = _session_name(params)
         session_dir = _session_dir(params)
         pptx_files = sorted(session_dir.glob("*.pptx"),
                             key=lambda p: p.stat().st_mtime)
         if not pptx_files:
-            return _degraded(visited, "未找到 PPTX 渲染产物")
+            return _degraded(visited, "未找到 PPTX 渲染产物", params)
         pptx = pptx_files[-1]  # 重渲染会同名覆盖，取 mtime 最新
 
         soffice = shutil.which("soffice")
         if not soffice:
-            return _degraded(visited, "未安装 LibreOffice，无法转页面图")
+            return _degraded(visited, "未安装 LibreOffice，无法转页面图", params)
 
         review_dir = session_dir / "review"
         review_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = _convert_pptx_to_pdf(soffice, pptx, review_dir)
         if pdf_path is None:
-            return _degraded(visited, "LibreOffice 转换 PDF 失败")
+            return _degraded(visited, "LibreOffice 转换 PDF 失败", params)
 
         try:
             import pymupdf as fitz
@@ -217,7 +229,7 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
         with fitz.open(pdf_path) as pdf:
             total = pdf.page_count
             if total == 0:
-                return _degraded(visited, "PDF 无页面")
+                return _degraded(visited, "PDF 无页面", params)
             shots: dict[int, tuple[str, bytes]] = {}  # 页序 → (png 路径名, bytes)
             for i in range(total):
                 pix = pdf[i].get_pixmap(dpi=110)
@@ -253,7 +265,7 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
             issues_out.extend(issues)
 
         if not pages_out:
-            return _degraded(visited, "所有页面视觉审查均失败")
+            return _degraded(visited, "所有页面视觉审查均失败", params)
 
         score = round(sum(p["score"] for p in pages_out) / len(pages_out))
         payload = {"available": True, "reason": "", "score": score,
@@ -262,6 +274,7 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
               f"{score} 分，{len(issues_out)} 个问题，检查 {len(pages_out)} 页"
               + (f"，跳过 {skipped} 页" if skipped else ""))
         _emit(emitter, {"type": "visual", "visual": payload})
+        _save_state(params, yuwen_visual=payload)
         return {"yuwen_visual": payload, "nodes_visited": visited}
 
     return visual_review

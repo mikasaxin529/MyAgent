@@ -280,7 +280,11 @@ class TestLegacyPathZeroRegression:
     必须与 HEAD 代码渲染产物 zip 条目全等——证明新代码对老内容零侵入。
 
     区别于 test_yuwen_themes.TestDefaultRegression（对比 HEAD 代码 ×
-    工作区新 JSON，#23 追加示例页后预期红）：这里锁的是渲染器本身。"""
+    工作区新 JSON，#23 追加示例页后预期红）：这里锁的是渲染器本身。
+
+    #31 ruby-line 渲染修复（4x 超采样 + 短行放大 + 满栏拉伸）是用户拍板的
+    刻意漂移：老 jingyesi 的 read-rhythm 页（slide7 + 其 ruby 图）产物必然
+    变化，本测试对 HEAD 基线预期红，修复提交合入后自动回绿。"""
 
     def test_legacy_json_pptx_identical(self, tmp_path):
         r = subprocess.run(["git", "archive", "HEAD", "src/aidraft/agenthub/yuwen"],

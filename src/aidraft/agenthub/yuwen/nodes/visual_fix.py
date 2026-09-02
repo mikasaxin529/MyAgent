@@ -11,10 +11,12 @@ visual_review 复查对比分数：升/平保留新版，降则回滚备份并�
 - pending=True   → 对比阶段：读复查 score 决定保留或回滚（回滚置 rollback=1，
                    出口仍走 render；保留则直进 report）
 
-成本护栏：只修 severity=high、或 medium 且抽查页数 ≤ _MEDIUM_MAX_PAGES 的
-issue；low 只统计；color_mismatch / theme_mismatch / other 属渲染/主题层
-问题，重生成内容无意义不修；单轮重生成页数上限 _MAX_FIX_PAGES（按严重度
-排序取前 3 页）；全流程最多 1 轮（yuwen_visual_fix_rounds）。
+成本护栏：只修 severity=high / medium（low 只统计；历史上 medium 限定
+抽查 ≤4 页的小 deck 才修，而默认抽查上限提到 14 后该门槛等于永久封死
+medium——用户实测缺陷正是 medium 级不可读页，放开）；color_mismatch /
+theme_mismatch / other 属渲染/主题层问题，重生成内容无意义不修；单轮
+重生成页数上限 _MAX_FIX_PAGES（按严重度排序取前 3 页）；全流程最多
+1 轮（yuwen_visual_fix_rounds）。
 
 降级原则（贯穿全管线）：LLM 失败 / 校验失败 / 写盘失败 / 一切异常 →
 保留原版放行 report，step 帧注明原因，绝不 raise。
@@ -56,7 +58,6 @@ _TYPE_LABELS = {
 
 # ---- 成本护栏参数（汇报口径，测试断言与此一致）----
 _MAX_FIX_PAGES = 3      # 单轮 LLM 重生成页数上限
-_MEDIUM_MAX_PAGES = 4   # 抽查 ≤4 页（小 deck）时 medium 才值得修
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -70,7 +71,6 @@ def _actionable_issues(visual: dict) -> list[dict]:
     """
     if not visual.get("available"):
         return []
-    n_sampled = len(visual.get("pages") or [])
     by_page: dict[str, list[dict]] = {}
     for it in visual.get("issues") or []:
         page_id = str(it.get("page_id") or "")
@@ -78,8 +78,9 @@ def _actionable_issues(visual: dict) -> list[dict]:
         sev = str(it.get("severity") or "low")
         if not page_id or typ not in _FIXABLE_TYPES:
             continue
-        # low 只统计不修；medium 仅小 deck 触发
-        if sev == "high" or (sev == "medium" and n_sampled <= _MEDIUM_MAX_PAGES):
+        # low 只统计不修；high/medium 均修（medium 的 deck 页数门槛已放开，
+        # 见模块 docstring）
+        if sev in ("high", "medium"):
             by_page.setdefault(page_id, []).append(it)
     if not by_page:
         return []

@@ -268,8 +268,11 @@ class TestSampling:
         monkeypatch.setenv("DASHSCOPE_VL_MAX_PAGES", "3")
         from aidraft.agenthub.yuwen.nodes.visual_review import _max_pages
         assert _max_pages() == 3
+        # 非法值回退默认（默认 14：线上一课 13-14 页，默认即全查）
         monkeypatch.setenv("DASHSCOPE_VL_MAX_PAGES", "abc")
-        assert _max_pages() == 8
+        assert _max_pages() == 14
+        monkeypatch.delenv("DASHSCOPE_VL_MAX_PAGES")
+        assert _max_pages() == 14
 
 
 # ======================================================================
@@ -551,9 +554,18 @@ class TestRouteAfterVisual:
         assert self._route({"yuwen_visual": v}) == "report"
 
     def test_medium_small_deck_to_fix(self):
-        # 抽查 ≤4 页时 medium 触发
         assert self._route({"yuwen_visual": _visual(80, [_issue("s01")],
                                                    n_pages=3)}) == "visual_fix"
+
+    def test_medium_large_deck_too_to_fix(self):
+        """medium 的 deck 页数门槛已放开：抽查 14 页的 medium 同样进修复。
+
+        原 _MEDIUM_MAX_PAGES=4 门槛在默认抽查上限提到 14 后等于永久
+        封死 medium——用户实测缺陷（初读节奏不可读）正是 medium 级。
+        """
+        v = _visual(80, [_issue("s05", "text_too_small", "medium")],
+                    n_pages=14)
+        assert self._route({"yuwen_visual": v}) == "visual_fix"
 
     def test_high_always_to_fix(self):
         # 高严重度不受页数门槛限制
