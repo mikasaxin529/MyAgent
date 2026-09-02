@@ -185,6 +185,10 @@ def _make_visual_review_node(emitter: Callable[[dict], None] | None):
                 _step(emitter, "visual_review", "视觉审查", "done",
                       "修复已回滚，透传修复前审查结果（未重跑 VLM）")
                 _emit(emitter, {"type": "visual", "visual": prev})
+                # 盘上同步回交付版结果——修复轮的降级 score 留在盘上
+                # 会与最终交付物不一致，误导复盘
+                _save_state(state.get("yuwen_params") or {},
+                            yuwen_visual=prev)
                 return {"yuwen_visual": prev, "nodes_visited": visited}
 
         try:

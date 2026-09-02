@@ -304,7 +304,7 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
                     # image 与 scene-strip 都是元素顶层 src，回填逻辑一致
                     el["src"] = f"assets/{fname}"
                     ok += 1
-                except Exception:  # noqa: BLE001 - 单张失败走占位
+                except Exception:  # noqa: BLE001 - 单张失败留空 src，收尾统一清理
                     fail += 1
 
         await asyncio.gather(*(_one(p, e, i) for p, e, i in targets),
@@ -323,7 +323,7 @@ def _make_gen_images_node(emitter: Callable[[dict], None] | None):
         if removed:
             detail += f"，清理 {removed} 个插图占位"
         if skipped:
-            detail += f"，另有 {skipped} 张候选未生成（走占位）"
+            detail += f"，{skipped} 张候选未选（占位已清理）"
         _step(emitter, "gen_images", "AI 配图", "done", detail)
         return {"yuwen_content": doc, "nodes_visited": visited}
 
