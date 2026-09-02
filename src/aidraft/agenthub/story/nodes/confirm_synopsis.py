@@ -79,9 +79,12 @@ def _make_confirm_synopsis_node(gateway: Any, emitter: Callable[[dict], None] | 
                     "story_synopsis_confirmed": True,
                     "nodes_visited": visited}
 
-        # 路径 B：自然语言修改 → LLM 改梗概
+        # 路径 B：自然语言修改 → LLM 改梗概（原始创意做锚点，防止改稿
+        # 越改越偏离用户设定）
         system_prompt = SYSTEM_EDIT_SYNOPSIS.format(
-            synopsis_json=json.dumps(synopsis, ensure_ascii=False, indent=1))
+            synopsis_json=json.dumps(synopsis, ensure_ascii=False, indent=1),
+            brief=str(params.get("brief") or "").strip()
+                  or "（无）")
         edited: dict | None = None
         err = ""
         try:

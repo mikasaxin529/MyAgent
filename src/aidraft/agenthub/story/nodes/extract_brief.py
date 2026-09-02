@@ -32,6 +32,28 @@ def _make_extract_brief_node(gateway: Any, emitter: Callable[[dict], None] | Non
         msgs = list(state.get("messages") or [])
         user_msg = state.get("user_message") or state.get("task", "")
 
+        # 创意收集阶段的完整用户原话：history 里的 user 消息 + 当轮
+        # （分几轮说清设定时，brief 不能只有最后一句）。保序去重——
+        # 当轮消息可能已被前端塞进 history 末尾，重复会稀释 brief
+        _seen: set[str] = set()
+        _parts: list[str] = []
+        for m in msgs:
+            if isinstance(m, dict):
+                role, content = m.get("role", ""), str(m.get("content", ""))
+            elif hasattr(m, "role"):
+                role, content = m.role, str(m.content)
+            else:
+                continue
+            if role == "user" and content.strip():
+                c = content.strip()
+                if c not in _seen:
+                    _seen.add(c)
+                    _parts.append(c)
+        cur = user_msg.strip()
+        if cur and cur not in _seen:
+            _parts.append(cur)
+        brief_full = "\n".join(_parts)
+
         llm_msgs = [ChatMessage("system", SYSTEM_EXTRACT_BRIEF)]
         if msgs:
             for m in msgs:
@@ -103,6 +125,11 @@ def _make_extract_brief_node(gateway: Any, emitter: Callable[[dict], None] | Non
             "genre": genre,
             "duration_min": duration,
             "style": style,
+            # 用户原话逐字直通（不经 LLM 转写）：extract 的 5 字段骨架会丢掉
+            # 修仙背景、人物关系等一切细节——线上实测用户设定全灭、被套幼儿
+            # 模板。brief 随 params 落盘，供 gen_synopsis/confirm_synopsis 做
+            # 设定锚点。
+            "brief": brief_full,
         }
         if session_short:
             params["_session"] = session_short

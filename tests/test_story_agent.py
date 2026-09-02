@@ -156,6 +156,36 @@ class TestExtractBrief:
         assert _normalize_duration("8") == 8
         assert _normalize_duration("abc") == 0
 
+    def test_brief_carries_user_words_verbatim(self):
+        """用户原话逐字进 params["brief"]——5 字段骨架丢设定是线上
+        实测事故（修仙定制被套幼儿模板），brief 是 gen_synopsis 的锚点。"""
+        from aidraft.agenthub.story.nodes.extract_brief import _make_extract_brief_node
+        gw = _gw({"title": "小师妹寻师兄记", "audience": "儿童（6-8岁）",
+                  "genre": "冒险", "duration_min": 8, "style": "温暖手绘风",
+                  "params_ready": True, "question": "", "chips": []})
+        node = _make_extract_brief_node(gw, None)
+        original = ("修仙背景：云糯糯被青云剑宗宗主顾清风收养并收徒，"
+                    "下山寻找五个已成各方霸主的师兄")
+        result = asyncio.run(node({
+            "task": original, "user_message": original, "messages": []}))
+        assert result["story_params"]["brief"] == original
+
+    def test_brief_collects_multi_turn_deduped(self):
+        """分几轮说创意时 brief 拼全部用户原话；当轮已在 history 里则不重复。"""
+        from aidraft.agenthub.story.nodes.extract_brief import _make_extract_brief_node
+        gw = _gw({"title": "寻师兄", "audience": "儿童", "genre": "冒险",
+                  "duration_min": 8, "style": "温暖手绘风",
+                  "params_ready": True, "question": "", "chips": []})
+        node = _make_extract_brief_node(gw, None)
+        result = asyncio.run(node({
+            "task": "主角是云糯糯", "user_message": "主角是云糯糯",
+            "messages": [{"role": "user", "content": "背景是修仙世界"},
+                         {"role": "assistant", "content": "师兄们什么样？"},
+                         {"role": "user", "content": "主角是云糯糯"}]}))
+        brief = result["story_params"]["brief"]
+        assert brief.count("主角是云糯糯") == 1
+        assert "背景是修仙世界" in brief
+
 
 # ---------------------------------------------------------------- 3. 状态机
 
@@ -299,6 +329,19 @@ class TestGenNodes:
         result = asyncio.run(node({"story_params": PARAMS}))
         assert result["story_synopsis"]["logline"]
         assert gw.chat.call_count == 2
+
+    def test_gen_synopsis_injects_brief_anchor(self, outputs_tmp):
+        """用户原话作为"最高锚点"段注入 system prompt；params_json 里
+        不重复出现 brief。"""
+        from aidraft.agenthub.story.nodes.gen_synopsis import _make_gen_synopsis_node
+        gw = _gw(SYNOPSIS)
+        params = dict(PARAMS, brief="云糯糯被宗主顾清风收养，下山寻五个师兄")
+        node = _make_gen_synopsis_node(gw, None)
+        asyncio.run(node({"story_params": params}))
+        sys_prompt = gw.chat.call_args[0][0][0].content
+        assert "云糯糯被宗主顾清风收养" in sys_prompt
+        assert "最高锚点" in sys_prompt
+        assert '"brief"' not in sys_prompt   # 不随参数 JSON 重复注入
 
     def test_gen_characters_ok(self, outputs_tmp):
         from aidraft.agenthub.story.nodes.gen_characters import _make_gen_characters_node
