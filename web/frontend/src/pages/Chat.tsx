@@ -379,6 +379,39 @@ export default function ChatPage() {
           patchAssistant((m) => ({ ...m, visual }));
           project();
         },
+        onSynopsis: (synopsis, chips) => {
+          patchAssistant((m) => {
+            const updated: Message = { ...m, storySynopsis: synopsis };
+            if (Array.isArray(chips) && chips.length > 0) {
+              const prev = Array.isArray(m.chips) ? m.chips : [];
+              updated.chips = [...prev, ...chips.filter((c) => !prev.includes(c))];
+            }
+            return updated;
+          });
+          project();
+        },
+        onStoryCharacters: (characters, chips) => {
+          patchAssistant((m) => {
+            const updated: Message = { ...m, storyCharacters: characters };
+            if (Array.isArray(chips) && chips.length > 0) {
+              const prev = Array.isArray(m.chips) ? m.chips : [];
+              updated.chips = [...prev, ...chips.filter((c) => !prev.includes(c))];
+            }
+            return updated;
+          });
+          project();
+        },
+        onStoryboard: (storyboard, chips) => {
+          patchAssistant((m) => {
+            const updated: Message = { ...m, storyStoryboard: storyboard };
+            if (Array.isArray(chips) && chips.length > 0) {
+              const prev = Array.isArray(m.chips) ? m.chips : [];
+              updated.chips = [...prev, ...chips.filter((c) => !prev.includes(c))];
+            }
+            return updated;
+          });
+          project();
+        },
         onAgentMeta: (meta) => {
           if (!inView()) return;
           setCurrentAgent((prev) => {

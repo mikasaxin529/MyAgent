@@ -8,6 +8,9 @@ import FileCard from "./FileCard";
 import OutlineCard from "./OutlineCard";
 import ReviewCard from "./ReviewCard";
 import VisualReviewCard from "./VisualReviewCard";
+import SynopsisCard from "./SynopsisCard";
+import CharactersCard from "./CharactersCard";
+import StoryboardCard from "./StoryboardCard";
 
 export interface MessageBubbleProps {
   message: Message;
@@ -83,8 +86,32 @@ export default function MessageBubble({ message, identityColor, isLast, onRegene
         )}
         {message.review && <ReviewCard review={message.review} />}
         {message.visual && <VisualReviewCard visual={message.visual} />}
-        {/* 有大纲时 chips 并入大纲卡底部按钮区，避免重复渲染 */}
-        {!message.outline && Array.isArray(message.chips) && message.chips.length > 0 && (
+        {message.storySynopsis && (
+          <SynopsisCard
+            synopsis={message.storySynopsis}
+            chips={message.chips}
+            onChipClick={onChipClick}
+          />
+        )}
+        {message.storyCharacters && (
+          <CharactersCard
+            characters={message.storyCharacters}
+            chips={message.chips}
+            onChipClick={onChipClick}
+          />
+        )}
+        {message.storyStoryboard && (
+          <StoryboardCard
+            storyboard={message.storyStoryboard}
+            chips={message.chips}
+            nShots={message.storyStoryboard.n_shots}
+            onChipClick={onChipClick}
+          />
+        )}
+        {/* 有结构化卡片（大纲/story 三卡）时 chips 并入卡片底部按钮区，避免重复渲染 */}
+        {!message.outline && !message.storySynopsis && !message.storyCharacters
+          && !message.storyStoryboard
+          && Array.isArray(message.chips) && message.chips.length > 0 && (
           <div className="chips">
             {message.chips.map((c, i) => (
               <button

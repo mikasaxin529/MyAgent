@@ -114,6 +114,78 @@ export interface VisualReviewData {
   issues?: VisualIssue[];
 }
 
+// ---- story 帧类型（M3 剧本分镜管线，字段全可选防御）----
+
+/** story_synopsis 帧单幕 */
+export interface StoryAct {
+  act?: string;
+  summary?: string;
+}
+
+/** story_synopsis 帧角色速写 */
+export interface StoryCharBrief {
+  name?: string;
+  desc?: string;
+}
+
+/** story_synopsis 帧 payload：故事梗概（第一确认点） */
+export interface StorySynopsisData {
+  title?: string;
+  logline?: string;
+  themes?: string[];
+  synopsis?: string;
+  acts?: StoryAct[];
+  characters_brief?: StoryCharBrief[];
+  scene_count?: number;
+}
+
+/** story_characters 帧单个角色卡 */
+export interface StoryCharacter {
+  id?: string;
+  name?: string;
+  role?: string;
+  /** 视觉锚点：全片形象以这段描述为准 */
+  description?: string;
+  /** 标准立绘生图提示词 */
+  ref_prompt?: string;
+  /** 立绘图相对路径（assets/characters/<id>.png，未生成为空） */
+  portrait?: string;
+  /** 立绘图 web 路径（/files/story/<会话>/assets/…，未生成为空） */
+  portrait_url?: string;
+}
+
+/** story_characters 帧 payload：角色卡（第二确认点） */
+export interface StoryCharactersData {
+  characters?: StoryCharacter[];
+}
+
+/** story_storyboard 帧单个镜头 */
+export interface StoryShot {
+  id?: string;
+  shot_size?: string;
+  camera?: string;
+  subject?: string;
+  action?: string;
+  dialogue?: string;
+  sfx?: string;
+  image_prompt?: string;
+}
+
+/** story_storyboard 帧单场 */
+export interface StoryScene {
+  scene_no?: number;
+  slug?: string;
+  synopsis?: string;
+  shots?: StoryShot[];
+}
+
+/** story_storyboard 帧 payload：分镜脚本（第三确认点） */
+export interface StoryStoryboardData {
+  scenes?: StoryScene[];
+  /** 总镜数（帧冗余字段，历史帧可能缺失） */
+  n_shots?: number;
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -132,6 +204,12 @@ export interface Message {
   review?: ReviewData;
   /** 渲染后视觉审查结果（visual 帧，仅 yuwen 管线产出） */
   visual?: VisualReviewData;
+  /** 故事梗概（story_synopsis 帧，仅 story 管线产出） */
+  storySynopsis?: StorySynopsisData;
+  /** 角色卡（story_characters 帧，仅 story 管线产出） */
+  storyCharacters?: StoryCharactersData;
+  /** 分镜脚本（story_storyboard 帧，仅 story 管线产出） */
+  storyStoryboard?: StoryStoryboardData;
 }
 
 // ---- Sessions（服务端持久化：SQLite via /api/sessions）----
@@ -335,6 +413,12 @@ export interface SSEChatOptions {
   onReview?: (review: ReviewData) => void;
   /** visual 帧：渲染后视觉审查结果 */
   onVisual?: (visual: VisualReviewData) => void;
+  /** story_synopsis 帧：故事梗概（含可选确认 chips） */
+  onSynopsis?: (synopsis: StorySynopsisData, chips?: string[]) => void;
+  /** story_characters 帧：角色卡（含可选确认 chips） */
+  onStoryCharacters?: (characters: StoryCharactersData, chips?: string[]) => void;
+  /** story_storyboard 帧：分镜脚本（含可选确认 chips） */
+  onStoryboard?: (storyboard: StoryStoryboardData, chips?: string[]) => void;
   onAgentMeta?: (meta: {
     agent_id: string;
     display_name: string;
@@ -415,6 +499,24 @@ export async function chatSSE(
               break;
             case "visual":
               opts.onVisual?.((frame.visual ?? {}) as VisualReviewData);
+              break;
+            case "story_synopsis":
+              opts.onSynopsis?.(
+                (frame.synopsis ?? {}) as StorySynopsisData,
+                Array.isArray(frame.chips) ? (frame.chips as string[]) : undefined,
+              );
+              break;
+            case "story_characters":
+              opts.onStoryCharacters?.(
+                (frame.characters ?? {}) as StoryCharactersData,
+                Array.isArray(frame.chips) ? (frame.chips as string[]) : undefined,
+              );
+              break;
+            case "story_storyboard":
+              opts.onStoryboard?.(
+                (frame.storyboard ?? {}) as StoryStoryboardData,
+                Array.isArray(frame.chips) ? (frame.chips as string[]) : undefined,
+              );
               break;
             case "agent_meta":
               opts.onAgentMeta?.(frame as {
