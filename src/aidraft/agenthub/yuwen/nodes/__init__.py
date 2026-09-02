@@ -2,6 +2,7 @@
 
 每个节点一个模块：
 - extract_params: 对话追问收集参数
+- research:       大纲前联网资料搜索（可选增强，无 key 跳过，M2）
 - gen_outline:    生成页面大纲（→ END 等确认）
 - confirm:        查盘恢复大纲，确认/切主题/改纲
 - gen_slides:     逐页生成内容（页级反思重试，重写自 gen_content）
@@ -22,6 +23,7 @@ from .confirm import _make_confirm_node
 from .extract_params import _make_extract_params_node, _normalize_grade
 from .gen_images import _make_gen_images_node
 from .gen_outline import _make_gen_outline_node
+from .research import _make_research_node
 from .gen_plan import _make_gen_plan_node
 from .gen_slides import _make_gen_slides_node
 from .render import _make_render_node
@@ -34,6 +36,7 @@ from .visual_review import _make_visual_review_node
 __all__ = [
     "_make_extract_params_node",
     "_normalize_grade",
+    "_make_research_node",
     "_make_gen_outline_node",
     "_make_confirm_node",
     "_make_gen_slides_node",

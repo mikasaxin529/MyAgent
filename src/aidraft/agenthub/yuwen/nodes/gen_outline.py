@@ -12,6 +12,7 @@ from ..prompts import SYSTEM_GEN_OUTLINE, META_CONTRACT, _read_ref, _themes_hint
 from ..state import (
     YuwenState,
     _emit_outline,
+    _load_state,
     _outline_summary,
     _parse_llm_json,
     _save_state,
@@ -38,18 +39,32 @@ def _make_gen_outline_node(gateway: Any, emitter: Callable[[dict], None] | None,
 
         params = state.get("yuwen_params", {})
 
+        # 联网参考资料（M2）：research 节点写入 state；路由直跳本节点的
+        # 场景（盘上已确认后重跑等）state 里没有——查盘兜底
+        research = state.get("yuwen_research") or {}
+        if not research.get("content"):
+            research = _load_state(params).get("yuwen_research") or {}
+
         system_prompt = SYSTEM_GEN_OUTLINE.format(
             stages=_read_ref("stages.md"),
             lesson_types=_read_ref("lesson-types.md"),
             meta_contract=META_CONTRACT.format(themes=_themes_hint()),
             themes=_themes_hint(),
         )
+        research_seg = ""
+        if research.get("content"):
+            research_seg = (
+                f"\n## 联网参考资料（真实网络搜索结果，供参考——"
+                f"教学设计要原创，只借结构思路；课文原文以资料为准）\n"
+                f"{research['content']}\n"
+            )
         user_prompt = (
             f"请为以下课文设计课件大纲：\n"
             f"课文名：{params.get('title', '')}\n"
             f"年级：{params.get('grade', '')}\n"
             f"课型：{params.get('lesson_type', '')}\n"
-            f"教材版本：{params.get('textbook', '')}\n\n"
+            f"教材版本：{params.get('textbook', '')}\n"
+            f"{research_seg}\n"
             f"直接输出大纲 JSON。"
         )
 

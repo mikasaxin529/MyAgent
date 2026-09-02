@@ -2,6 +2,8 @@
 
 管线：
   extract_params（对话收参数）
+  → research（联网搜教学设计 + 课文原文，可选增强：无 TAVILY_API_KEY /
+    搜索失败均降级放行不阻断；结果落盘 TTL 7 天，改纲轮不重搜）
   → gen_outline（生成大纲 → END，等用户确认）
   → confirm（查盘恢复大纲：确认放行 / 切主题 / 改纲 → END 或继续）
   → gen_slides（逐页生成 + 页级反思重试）
@@ -24,7 +26,8 @@
   关键在 extract_params 之后的**条件路由函数 _route_after_params 每轮重新
   求值且查盘**：同一条边在不同轮根据"盘上有没有大纲 / 大纲确认了没有"
   走不同分支——
-    params_ready 且盘上无 outline        → gen_outline（首轮生成大纲）
+    params_ready 且盘上无 outline        → research → gen_outline（首轮，
+                                          搜索降级时 research 直通）
     params_ready 且盘上有 outline 未确认 → confirm（用户回复确认/改纲）
     params_ready 且盘上 outline 已确认   → gen_slides（罕见：确认后中断续跑）
     params 未 ready 但消息像大纲指令     → confirm（chip 点击/确认词被参数
@@ -80,6 +83,7 @@ from .nodes import (
     _make_gen_slides_node,
     _make_render_node,
     _make_report_node,
+    _make_research_node,
     _make_review_node,
     _make_revise_node,
     _make_visual_fix_node,
@@ -142,7 +146,7 @@ def _route_after_params(state: YuwenState) -> str:
     disk = _load_state(params)
     outline = disk.get("yuwen_outline") or {}
     if not outline.get("pages"):
-        return "gen_outline"
+        return "research"
     if disk.get("yuwen_outline_confirmed"):
         # 已确认（上一轮 confirm 放行但生成中断/或确认后用户又发消息）：
         # 直接续跑逐页生成。confirm 节点里 already_confirmed 也放行，双保险。
@@ -228,6 +232,7 @@ def build_graph(
 
     # 注册节点
     graph.add_node("extract_params", _make_extract_params_node(gateway, emitter))
+    graph.add_node("research", _make_research_node(emitter))
     graph.add_node("gen_outline", _make_gen_outline_node(gateway, emitter, kw_outline))
     graph.add_node("confirm", _make_confirm_node(gateway, emitter, kw_outline))
     graph.add_node("gen_slides", _make_gen_slides_node(gateway, emitter, kw_slide))
@@ -243,17 +248,20 @@ def build_graph(
     # 入口
     graph.set_entry_point("extract_params")
 
-    # extract_params →（跨轮路由）→ gen_outline / confirm / gen_slides / END
+    # extract_params →（跨轮路由）→ research / confirm / gen_slides / END
     graph.add_conditional_edges(
         "extract_params",
         _route_after_params,
         {
-            "gen_outline": "gen_outline",
+            "research": "research",
             "confirm": "confirm",
             "gen_slides": "gen_slides",
             "__end__": END,
         },
     )
+
+    # research → gen_outline：搜资料（无 key / 失败均降级放行，不阻断）
+    graph.add_edge("research", "gen_outline")
 
     # 大纲 → END（本轮结束，等用户确认）
     graph.add_edge("gen_outline", END)

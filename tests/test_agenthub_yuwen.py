@@ -209,11 +209,11 @@ class TestRouteAfterParams:
         """参数未齐 → END。"""
         assert self._route({"yuwen_params_ready": False}) == "__end__"
 
-    def test_ready_no_outline_gen_outline(self):
-        """参数齐 + 盘上无大纲 → gen_outline。"""
+    def test_ready_no_outline_research(self):
+        """参数齐 + 盘上无大纲 → research（M2：搜索后进 gen_outline）。"""
         got = self._route({"yuwen_params_ready": True, "yuwen_params": PARAMS},
                           disk={})
-        assert got == "gen_outline"
+        assert got == "research"
 
     def test_ready_unconfirmed_outline_confirm(self):
         """盘上有未确认大纲 → confirm。"""

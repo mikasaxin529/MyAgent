@@ -34,6 +34,7 @@ class YuwenState(TypedDict, total=False):
     # 语文专用
     yuwen_params: dict           # {title, grade, lesson_type, textbook}
     yuwen_params_ready: bool     # True=齐备放行 / False=追问后 END
+    yuwen_research: dict         # 联网参考资料 {content, sources, ts}（M2，可空）
     yuwen_outline: dict          # {pages: [{id, kind, title, points, period}], meta: {...}}
     yuwen_outline_confirmed: bool  # confirm 节点判定用户确认后 True
     yuwen_review: dict           # {scores: {dim: int}, issues: [{page_id, problems}], pass: bool}
