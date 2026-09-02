@@ -101,6 +101,9 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
 
         params_ready = bool(title and 1 <= grade <= 6 and lesson_type)
         prefs = _image_prefs(parsed)  # 用户提到了才有键，缺省走 gen_images 默认
+        # 前端会话短码（不进 prefs——prefs 会拼进 prompt；params 落盘
+        # state.json 供 _session_name 隔离，同课名新会话不被旧状态劫持）
+        session_short = str(state.get("session_id") or "")[-8:]
 
         if not params_ready:
             # 参数缺失，返回追问。
@@ -123,6 +126,8 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
                 "textbook": textbook or "",
             }
             ask_params.update(prefs)
+            if session_short:
+                ask_params["_session"] = session_short
             return {
                 "yuwen_params": ask_params,
                 "yuwen_params_ready": False,
@@ -138,6 +143,8 @@ def _make_extract_params_node(gateway: Any, emitter: Callable[[dict], None] | No
             "textbook": textbook or f"部编版{grade}年级",
         }
         params.update(prefs)
+        if session_short:
+            params["_session"] = session_short
         detail = f"《{title}》· {grade}年级 · {lesson_type}"
         if prefs.get("image_style"):
             detail += f" · 配图{prefs['image_style']}"

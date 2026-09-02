@@ -55,7 +55,8 @@ def _make_confirm_characters_node(gateway: Any, emitter: Callable[[dict], None] 
         disk = _load_state(params) if params.get("title") else {}
         characters = disk.get("story_characters") or {}
         if not characters.get("characters"):
-            pending = _find_pending_session("characters")
+            pending = _find_pending_session(
+                "characters", session_short=str(state.get("session_id") or "")[-8:])
             if pending:
                 params, disk = pending
                 characters = disk.get("story_characters") or {}

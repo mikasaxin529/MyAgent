@@ -137,7 +137,8 @@ def _route_after_params(state: YuwenState) -> str:
         # 为 False。此时若盘上有待确认大纲，兜底进 confirm。
         if _looks_like_outline_command(
                 state.get("user_message") or state.get("task", "")):
-            pending = _find_pending_session()
+            pending = _find_pending_session(
+                session_short=str(state.get("session_id") or "")[-8:])
             if pending is not None:
                 return "confirm"
         return "__end__"

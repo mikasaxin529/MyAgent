@@ -111,7 +111,8 @@ def _make_confirm_node(gateway: Any, emitter: Callable[[dict], None] | None,
         disk = _load_state(params) if params.get("title") else {}
         outline = disk.get("yuwen_outline") or {}
         if not outline.get("pages"):
-            pending = _find_pending_session()
+            pending = _find_pending_session(
+                session_short=str(state.get("session_id") or "")[-8:])
             if pending:
                 params, disk = pending
                 outline = disk.get("yuwen_outline") or {}

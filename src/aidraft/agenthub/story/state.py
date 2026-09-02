@@ -31,6 +31,7 @@ class StoryState(TypedDict, total=False):
     messages: list
     final_answer: str
     nodes_visited: list
+    session_id: str  # 前端会话 id（/api/chat 传入）：state.json 会话键的隔离维度
     # 剧本专用
     story_params: dict         # {title, audience, genre, duration_min, style}
     story_params_ready: bool
@@ -57,10 +58,19 @@ _OUTPUTS_DIR = Path(os.environ.get("AIDRAFT_OUTPUTS_DIR")
 
 
 def _session_name(params: dict) -> str:
-    """从参数生成会话目录名（安全文件名，与 yuwen 同规则）。"""
+    """从参数生成会话目录名（安全文件名，与 yuwen 同规则）。
+
+    params 带 "_session" 短码（extract_brief 从前端 session_id 取后 8 位
+    写入）时拼进目录名——同片名的新会话不被旧会话 state.json 劫持；
+    缺省保持纯片名（历史兼容）。
+    """
     title = params.get("title", "untitled")
     safe_title = "".join(c for c in str(title) if c not in '\\/:*?"<>|')
-    return safe_title or "untitled"
+    name = safe_title or "untitled"
+    short = str(params.get("_session") or "").strip()
+    if short:
+        name += f"-{short}"
+    return name
 
 
 def _state_path(params: dict) -> Path:
@@ -150,11 +160,13 @@ def _stage_of(disk: dict) -> str:
     return "brief"
 
 
-def _find_pending_session(min_stage: str = "synopsis") -> tuple[dict, dict] | None:
+def _find_pending_session(min_stage: str = "synopsis",
+                          session_short: str = "") -> tuple[dict, dict] | None:
     """扫盘找回最近的未完成会话（阶段 ≥ min_stage 且未到 export）。
 
     与 yuwen._find_pending_session 同思路：chip 点击轮 params 可能被
     extract 判空，路由层兜底进 confirm 阶段节点时从盘上找回。
+    带 session 短码时只找回本会话的目录——不劫持其他前端会话的状态。
     返回 (params, disk_state)；无命中返回 None。
     """
     order = {"brief": 0, "synopsis": 1, "characters": 2, "storyboard": 3,
@@ -167,6 +179,8 @@ def _find_pending_session(min_stage: str = "synopsis") -> tuple[dict, dict] | No
         for sub in root.iterdir():
             sp = sub / "state.json"
             if not sp.exists():
+                continue
+            if session_short and not sub.name.endswith(f"-{session_short}"):
                 continue
             try:
                 data = json.loads(sp.read_text(encoding="utf-8"))

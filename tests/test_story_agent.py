@@ -214,6 +214,65 @@ class TestStateMachine:
         assert got == "confirm_synopsis"
 
 
+# ---------------------------------------------------------------- 3.5 会话隔离
+
+class TestSessionIsolation:
+    """前端 session_id 并入 state.json 会话键：同片名新会话不被旧状态劫持。"""
+
+    def test_session_name_with_short(self, outputs_tmp):
+        from aidraft.agenthub.story.state import _session_name
+        # 带短码：目录名拼接隔离
+        assert _session_name({"title": "小北极熊回家",
+                              "_session": "ab12cd34"}) == "小北极熊回家-ab12cd34"
+        # 无短码：保持纯片名（历史会话兼容）
+        assert _session_name({"title": "小北极熊回家"}) == "小北极熊回家"
+
+    def test_extract_brief_stamps_session(self, outputs_tmp):
+        """extract_brief 把前端 session_id 后 8 位写进 params。"""
+        from aidraft.agenthub.story.nodes.extract_brief import _make_extract_brief_node
+        gw = _gw({"title": "小北极熊回家", "params_ready": True,
+                  "question": "", "chips": []})
+        node = _make_extract_brief_node(gw, None)
+        result = asyncio.run(node({
+            "task": "小北极熊想回家", "user_message": "小北极熊想回家",
+            "messages": [], "session_id": "sess_1788314431714_ab12cd34"}))
+        assert result["story_params"]["_session"] == "ab12cd34"
+
+    def test_find_pending_filters_by_session(self, outputs_tmp):
+        """扫盘兜底只找回本会话目录，不劫持其他前端会话。"""
+        from aidraft.agenthub.story.state import _find_pending_session, _save_state
+        # 会话 A（本会话）：synopsis 待确认
+        _save_state({"title": "回家A", "_session": "aaaa1111"},
+                    story_synopsis=SYNOPSIS, story_params={"title": "回家A", "_session": "aaaa1111"},
+                    story_synopsis_confirmed=False)
+        # 会话 B（别的会话）：synopsis 也待确认，mtime 更晚
+        import time
+        time.sleep(0.05)
+        _save_state({"title": "回家B", "_session": "bbbb2222"},
+                    story_synopsis=SYNOPSIS, story_params={"title": "回家B", "_session": "bbbb2222"},
+                    story_synopsis_confirmed=False)
+        # 按会话 A 找回：拿到 A 的 params，不是 mtime 更新的 B
+        params, _disk = _find_pending_session(session_short="aaaa1111")
+        assert params["title"] == "回家A"
+        # 无短码（历史调用）：保持旧行为全局扫（mtime 最新的 B）
+        params2, _ = _find_pending_session()
+        assert params2["title"] == "回家B"
+
+    def test_route_new_session_not_hijacked(self, outputs_tmp):
+        """同片名旧会话已确认 storyboard，新会话（不同 session_id）仍从梗概开始。"""
+        from aidraft.agenthub.story.graph import _route_after_brief
+        from aidraft.agenthub.story.state import _save_state
+        # 旧会话（session_old）已全部确认 → stage=export
+        _save_state({"title": "小北极熊回家", "_session": "old99999"},
+                    story_params={"title": "小北极熊回家", "_session": "old99999"},
+                    story_storyboard=STORYBOARD, story_storyboard_confirmed=True)
+        # 新会话参数（session_new）——_session_name 派生不同目录，盘上无状态
+        new_params = dict(PARAMS, _session="new88888")
+        got = _route_after_brief({"story_params_ready": True,
+                                  "story_params": new_params})
+        assert got == "gen_synopsis"  # 不被旧会话劫持进 confirm/export
+
+
 # ---------------------------------------------------------------- 4. 生成节点
 
 class TestGenNodes:

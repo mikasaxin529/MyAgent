@@ -252,6 +252,75 @@ class TestRouteAfterParams:
         assert got == "__end__"
 
 
+class TestSessionIsolation:
+    """前端 session_id 并入 state.json 会话键：同课名新会话不被旧状态劫持。"""
+
+    def test_session_name_with_short(self):
+        from aidraft.agenthub.yuwen.state import _session_name
+        assert _session_name({"title": "静夜思", "lesson_type": "古诗词",
+                              "_session": "ab12cd34"}) == "静夜思-古诗词-ab12cd34"
+        # 无短码：历史会话目录名不变
+        assert _session_name({"title": "静夜思",
+                              "lesson_type": "古诗词"}) == "静夜思-古诗词"
+
+    def test_extract_params_stamps_session(self):
+        """extract_params 把前端 session_id 后 8 位写进 params（不进 prefs）。"""
+        from aidraft.agenthub.yuwen.nodes.extract_params import _make_extract_params_node
+        gw = MagicMock()
+        gw.chat.return_value = MagicMock(content=json.dumps(
+            {"title": "静夜思", "grade": 1, "lesson_type": "古诗词",
+             "textbook": "", "question": "", "chips": []}, ensure_ascii=False))
+        node = _make_extract_params_node(gw, None)
+        result = asyncio.run(node({
+            "task": "静夜思", "user_message": "静夜思", "messages": [],
+            "session_id": "sess_1788314431714_ab12cd34"}))
+        assert result["yuwen_params"]["_session"] == "ab12cd34"
+        # 追问轮也带短码（半填的 params 落盘后可被找回）
+        gw.chat.return_value = MagicMock(content=json.dumps(
+            {"title": "静夜思", "grade": 0, "lesson_type": "",
+             "textbook": "", "question": "几年级？", "chips": []}, ensure_ascii=False))
+        result2 = asyncio.run(node({
+            "task": "静夜思", "user_message": "静夜思", "messages": [],
+            "session_id": "sess_1788314431714_ab12cd34"}))
+        assert result2["yuwen_params"]["_session"] == "ab12cd34"
+
+    def test_route_new_session_not_hijacked(self):
+        """旧会话大纲已确认，新会话（不同 session 短码）仍从大纲重新开始。
+
+        修复前：state.json 按课文名落盘，新会话被旧会话状态劫持直跳
+        gen_slides，跳过大纲确认。
+        """
+        from aidraft.agenthub.yuwen import graph as gr
+        new_params = dict(PARAMS, _session="new88888")
+        # 盘上无此新会话的 state（_load_state 返回 {}）
+        with patch("aidraft.agenthub.yuwen.graph._load_state", return_value={}):
+            got = gr._route_after_params({
+                "yuwen_params_ready": True, "yuwen_params": new_params})
+        assert got == "research"  # 走 research → gen_outline，不劫持
+
+    def test_find_pending_filters_by_session(self, outputs_tmp):
+        """_find_pending_session 只扫本会话目录，不劫持其他会话的大纲。"""
+        from aidraft.agenthub.yuwen import state as st
+
+        # 旧会话（无短码）有未确认大纲；本会话短码 aa111111 的目录为空
+        st._save_state(dict(PARAMS), yuwen_outline=SAMPLE_OUTLINE,
+                       yuwen_params=dict(PARAMS))
+        got = st._find_pending_session(session_short="aa111111")
+        assert got is None  # 不被旧会话劫持
+
+        # 本会话自己的待确认大纲能找回
+        mine = dict(PARAMS, _session="aa111111")
+        st._save_state(mine, yuwen_outline=SAMPLE_OUTLINE,
+                       yuwen_params=mine, yuwen_outline_confirmed=False)
+        got2 = st._find_pending_session(session_short="aa111111")
+        assert got2 is not None
+        assert got2[0]["_session"] == "aa111111"
+
+        # 无短码：保持旧行为（全局扫 mtime 最新的未确认会话）
+        got3 = st._find_pending_session()
+        assert got3 is not None
+
+
 class TestRouteAfterConfirmAndReview:
     """confirm / review 出口路由。"""
 

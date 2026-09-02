@@ -43,9 +43,11 @@ def _make_gen_synopsis_node(gateway: Any, emitter: Callable[[dict], None] | None
             visited.append("gen_synopsis")
 
         params = state.get("story_params", {})
+        # _session 是会话隔离用的内部字段，不进 prompt
+        prompt_params = {k: v for k, v in params.items() if not k.startswith("_")}
 
         system_prompt = SYSTEM_GEN_SYNOPSIS.format(
-            params_json=json.dumps(params, ensure_ascii=False, indent=1))
+            params_json=json.dumps(prompt_params, ensure_ascii=False, indent=1))
         user_prompt = "直接输出梗概 JSON。"
 
         synopsis: dict | None = None

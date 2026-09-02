@@ -56,7 +56,8 @@ def _make_confirm_synopsis_node(gateway: Any, emitter: Callable[[dict], None] | 
         disk = _load_state(params) if params.get("title") else {}
         synopsis = disk.get("story_synopsis") or {}
         if not synopsis.get("logline"):
-            pending = _find_pending_session()
+            pending = _find_pending_session(
+                session_short=str(state.get("session_id") or "")[-8:])
             if pending:
                 params, disk = pending
                 synopsis = disk.get("story_synopsis") or {}

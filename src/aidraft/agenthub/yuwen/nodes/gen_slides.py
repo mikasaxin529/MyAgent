@@ -3,7 +3,8 @@
 由 gen_content 重写而来。核心变化：一次性全量生成 → 单页粒度——
 - 单次输出短，截断（finish_reason=length）与格式漂移概率大幅下降；
 - 页级重试只重掷失败页，不报废整课；
-- token 帧带 step_id="gen_slides"，前端能看到逐页进度。
+- 逐页进度走 step 帧（N/14 页：标题）；原始 JSON token 不外发
+  （流进正文气泡只会是 {"id": "s01"… 碎片）。
 并发是后续优化项（gateway 内部已有主备重试，先保正确再谈速度）。
 """
 from __future__ import annotations
@@ -163,10 +164,11 @@ async def _gen_one_page(gateway, emitter, system_prompt: str, user_prompt: str,
             stream = _call_llm(gateway, "stream_chat", llm_msgs, model_kwargs,
                                temperature=0.3 + 0.2 * attempt)
             async for chunk in stream:
+                # 逐页产物是 JSON，原始 token 流进正文气泡只会呈现
+                # {"id": "s01"… 碎片——进度走 step 帧（N/14 页：标题），
+                # 这里只累积不外发。
                 if chunk.delta:
                     content += chunk.delta
-                    _emit(emitter, {"type": "token", "delta": chunk.delta,
-                                    "step_id": "gen_slides"})
                 if chunk.reasoning:
                     _emit(emitter, {"type": "thinking", "node": "gen_slides",
                                     "phase": "reasoning", "delta": chunk.reasoning})
@@ -209,9 +211,8 @@ async def _gen_one_page(gateway, emitter, system_prompt: str, user_prompt: str,
                     f"上一轮输出未通过校验（{err[:200]}）。重点检查："
                     "elements[].type 用连字符枚举名（word-card 不是 word_card）、"
                     "elements 必须是数组、只输出单页 JSON 对象。")
-            _emit(emitter, {"type": "token",
-                            "delta": f"\n[本页重试：{err[:60]}]\n",
-                            "step_id": "gen_slides"})
+            _step(emitter, "gen_slides", "逐页生成", "running",
+                  f"本页重试：{err[:60]}")
             feedback_msgs = [ChatMessage("assistant", content[-3000:]),
                              ChatMessage("user", hint)]
 

@@ -72,6 +72,9 @@ def _make_extract_brief_node(gateway: Any, emitter: Callable[[dict], None] | Non
 
         # 创意有实质内容（标题非空）即 ready；受众/题材空时给默认值
         params_ready = bool(title)
+        # 前端会话短码：_session_name 据此隔离 state.json（同片名新会话
+        # 不被旧会话盘上状态劫持）。不进 LLM 输出，只落盘。
+        session_short = str(state.get("session_id") or "")[-8:]
         if not audience:
             audience = "全年龄"
         if not genre:
@@ -101,6 +104,8 @@ def _make_extract_brief_node(gateway: Any, emitter: Callable[[dict], None] | Non
             "duration_min": duration,
             "style": style,
         }
+        if session_short:
+            params["_session"] = session_short
         detail = f"《{title}》· {audience} · {genre} · {duration}分钟 · {style}"
         _step(emitter, "extract_brief", "解析创意", "done", detail)
         return {

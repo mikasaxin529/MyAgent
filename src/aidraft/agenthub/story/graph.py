@@ -95,7 +95,8 @@ def _route_after_brief(state: StoryState) -> str:
         # 查盘找最近的待确认会话，路由到对应 confirm
         if _looks_like_stage_command(
                 state.get("user_message") or state.get("task", "")):
-            pending = _find_pending_session()
+            pending = _find_pending_session(
+                session_short=str(state.get("session_id") or "")[-8:])
             if pending is not None:
                 stage = _stage_of(pending[1])
                 return {"synopsis": "confirm_synopsis",

@@ -54,7 +54,8 @@ def _make_confirm_storyboard_node(gateway: Any, emitter: Callable[[dict], None] 
         disk = _load_state(params) if params.get("title") else {}
         storyboard = disk.get("story_storyboard") or {}
         if not storyboard.get("scenes"):
-            pending = _find_pending_session("storyboard")
+            pending = _find_pending_session(
+                "storyboard", session_short=str(state.get("session_id") or "")[-8:])
             if pending:
                 params, disk = pending
                 storyboard = disk.get("story_storyboard") or {}

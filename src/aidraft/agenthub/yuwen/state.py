@@ -31,6 +31,7 @@ class YuwenState(TypedDict, total=False):
     messages: list
     final_answer: str
     nodes_visited: list
+    session_id: str  # 前端会话 id（/api/chat 传入）：state.json 会话键的隔离维度
     # 语文专用
     yuwen_params: dict           # {title, grade, lesson_type, textbook}
     yuwen_params_ready: bool     # True=齐备放行 / False=追问后 END
@@ -72,12 +73,22 @@ _OUTPUTS_DIR = Path(os.environ.get("AIDRAFT_OUTPUTS_DIR")
 
 
 def _session_name(params: dict) -> str:
-    """从参数生成会话目录名（安全文件名）。"""
+    """从参数生成会话目录名（安全文件名）。
+
+    前端每条会话有独立 session_id——同课名的新会话不能被旧会话的
+    state.json 劫持（跳过大纲确认直接续跑）。params 里带 session 短码
+    （extract_params 写入的 "_session"）时拼进目录名隔离；缺省时保持
+    纯课文名目录（历史会话/测试兼容）。
+    """
     title = params.get("title", "untitled")
     lesson_type = params.get("lesson_type", "unknown")
     safe_title = "".join(c for c in title if c not in '\\/:*?"<>|')
     safe_lt = "".join(c for c in lesson_type if c not in '\\/:*?"<>|')
-    return f"{safe_title}-{safe_lt}"
+    name = f"{safe_title}-{safe_lt}"
+    short = str(params.get("_session") or "").strip()
+    if short:
+        name += f"-{short}"
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +233,12 @@ def _looks_like_outline_command(msg: str) -> bool:
     return ("《" not in s) and any(w in s for w in _CONFIRM_WORDS)
 
 
-def _find_pending_session() -> tuple[dict, dict] | None:
+def _find_pending_session(session_short: str = "") -> tuple[dict, dict] | None:
     """扫描 _OUTPUTS_DIR/yuwen/*/state.json，找最近更新的未确认大纲会话。
 
-    返回 (params, disk_state)；无未确认大纲返回 None。单用户场景下
-    "最近修改 + 未确认"足以唯一定位待确认会话。异常吞掉返回 None。
+    带 session 短码时只扫本会话的目录（目录名后缀 -<短码>）——不劫持
+    其他前端会话的待确认大纲。返回 (params, disk_state)；无未确认大纲
+    返回 None。异常吞掉返回 None。
     """
     try:
         root = _OUTPUTS_DIR / "yuwen"
@@ -236,6 +248,8 @@ def _find_pending_session() -> tuple[dict, dict] | None:
         for sub in root.iterdir():
             sp = sub / "state.json"
             if not sp.exists():
+                continue
+            if session_short and not sub.name.endswith(f"-{session_short}"):
                 continue
             try:
                 data = json.loads(sp.read_text(encoding="utf-8"))
