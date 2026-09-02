@@ -39,3 +39,6 @@ tmp_*.py
 
 # 部署临时打包产物（sync.sh）
 *.tgz
+
+# Windows 本机专用端口映射（避开 D3A dev 栈的 127.0.0.1:8000），不入库避免随部署泄漏到服务器
+docker-compose.override.yml

@@ -1,7 +1,0 @@
-# 本地开发覆盖：D3A dev 栈占了 127.0.0.1:8000，本地容器换 8010。
-# 生产（服务器）不受影响——那里没有 D3A 栈，deploy.sh 依旧用 8000。
-# 用法：docker compose up -d（override 自动合并）；生产服务器上此文件不部署。
-services:
-  aidraft:
-    ports: !override
-      - "8010:8000"
