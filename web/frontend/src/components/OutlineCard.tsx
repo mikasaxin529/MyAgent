@@ -1,5 +1,5 @@
 import { BookOpen, Layers, Palette } from "lucide-react";
-import type { OutlineData } from "../api";
+import type { OutlineData, ThemeOption } from "../api";
 
 export interface OutlineCardProps {
   outline: OutlineData;
@@ -8,14 +8,20 @@ export interface OutlineCardProps {
   onChipClick?: (text: string) => void;
 }
 
-/** theme id → 中文名（未知主题原样显示）。键与后端 LESSON_THEMES 一致：
- * default / fresh-blue / warm-green / mint-green。 */
-const THEME_NAMES: Record<string, string> = {
+/** 主题徽章显示名：优先帧内 options.themes（后端注册表派生，M1 即插即用）；
+ * 未知主题（历史会话/options 缺失）回退内置四主题映射，再不济显示原名。 */
+const FALLBACK_THEME_NAMES: Record<string, string> = {
   default: "暖橙",
   "fresh-blue": "青蓝",
   "warm-green": "墨绿",
   "mint-green": "青绿",
 };
+
+function themeDisplayName(themes: ThemeOption[] | undefined, name?: string): string {
+  if (!name) return FALLBACK_THEME_NAMES["default"];
+  const hit = themes?.find((t) => t.name === name);
+  return hit?.display ?? FALLBACK_THEME_NAMES[name] ?? name;
+}
 
 /** 判断 chip 语义：确认类为主按钮，主题类带调色板图标 */
 function chipKind(chip: string): "confirm" | "theme" | "plain" {
@@ -24,11 +30,14 @@ function chipKind(chip: string): "confirm" | "theme" | "plain" {
   return "plain";
 }
 
-/** 课件大纲卡片：嵌入消息流，头部元信息 + 按课时分组的页列表 + 底部确认 chips。 */
+/** 课件大纲卡片：嵌入消息流，头部元信息 + 按课时分组的页列表 + 底部确认 chips。
+ *  主题切换：options.themes 非空时渲染完整选择器（色卡+名称），点击即发
+ *  "换<display>主题"；只有 chips 时退化为快捷按钮（旧会话兼容）。 */
 export default function OutlineCard({ outline, chips, onChipClick }: OutlineCardProps) {
   const meta = outline.meta ?? {};
   const pages = Array.isArray(outline.pages) ? outline.pages : [];
-  const themeName = meta.theme ? THEME_NAMES[meta.theme] ?? meta.theme : "暖橙";
+  const themeOptions = outline.options?.themes ?? [];
+  const themeName = themeDisplayName(themeOptions, meta.theme);
 
   // 按 period 分组（保持出现顺序；缺 period 归入第 1 课时）
   const groups: { period: number; pages: typeof pages }[] = [];
@@ -38,6 +47,11 @@ export default function OutlineCard({ outline, chips, onChipClick }: OutlineCard
     if (hit) hit.pages.push(p);
     else groups.push({ period, pages: [p] });
   }
+
+  // 主题 chips（"换青蓝主题"）在有完整选择器时隐藏——选择器已覆盖其功能
+  const visibleChips = themeOptions.length > 0
+    ? (chips ?? []).filter((c) => !chipKind(c).includes("theme"))
+    : chips;
 
   return (
     <div className="outline-card">
@@ -53,6 +67,35 @@ export default function OutlineCard({ outline, chips, onChipClick }: OutlineCard
         <span className="oc-badge theme"><Palette size={10} style={{ verticalAlign: "-1px", marginRight: 3 }} />{themeName}</span>
       </div>
       {meta.textbook && <div className="oc-sub">{meta.textbook}</div>}
+
+      {themeOptions.length > 0 && (
+        <div className="oc-themes" role="group" aria-label="切换主题">
+          {themeOptions.map((t) => {
+            const active = t.name === meta.theme;
+            return (
+              <button
+                key={t.name}
+                type="button"
+                className={`oc-theme-btn${active ? " active" : ""}`}
+                onClick={() => !active && onChipClick?.(`换${t.display}主题`)}
+                title={t.tags?.length ? `${t.display} · ${t.tags.join("/")}` : t.display}
+                aria-pressed={active}
+              >
+                {t.swatch?.length ? (
+                  <span className="oc-swatch">
+                    {t.swatch.slice(0, 3).map((c, i) => (
+                      <i key={i} style={{ background: `#${c}` }} />
+                    ))}
+                  </span>
+                ) : (
+                  <Palette size={11} />
+                )}
+                <span>{t.display}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="oc-pages">
         {groups.length === 0 ? (
@@ -78,9 +121,9 @@ export default function OutlineCard({ outline, chips, onChipClick }: OutlineCard
         )}
       </div>
 
-      {Array.isArray(chips) && chips.length > 0 && (
+      {Array.isArray(visibleChips) && visibleChips.length > 0 && (
         <div className="oc-chips">
-          {chips.map((c, i) => {
+          {visibleChips.map((c, i) => {
             const kind = chipKind(c);
             return (
               <button

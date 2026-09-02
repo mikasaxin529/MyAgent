@@ -23,6 +23,13 @@ def _read_ref(file_name: str) -> str:
     return f"（{file_name} 未找到）"
 
 
+def _themes_hint() -> str:
+    """主题清单文案（注册表派生）：gen_outline / edit_outline / META_CONTRACT
+    共用 {themes} 占位符，加主题自动进所有 prompt。"""
+    from .theme_registry import themes_hint_for_prompt
+    return themes_hint_for_prompt()
+
+
 SYSTEM_EXTRACT = """你是一个语文课件参数提取助手。你需要从用户消息中提取以下三个参数：
 
 1. 课文名（title）：如"静夜思"、"坐井观天"
@@ -34,8 +41,8 @@ SYSTEM_EXTRACT = """你是一个语文课件参数提取助手。你需要从用
 如果用户什么都没给，需要询问。
 
 另外可选提取配图偏好（用户提到了才填，没提就省略该字段）：
-- image_style：插图风格，"绘本" / "水彩" / "剪纸" / "国风" / "卡通" 之一
-  （如"配图用水彩风格""插画要国风的"）
+- image_style：插图风格。预置档"绘本" / "水彩" / "剪纸" / "国风" / "卡通"；
+  用户说其他风格（如"赛博朋克""蜡笔画"）就原样填用户原话，不要纠正
 - image_count：插图数量档，"minimal"（少配图，默认）/ "all"（每张都配，
   如"插图多一些""每页都要配图"）/ "none"（不配图，如"不要配图""不用生成插图"）
 
@@ -45,7 +52,7 @@ SYSTEM_EXTRACT = """你是一个语文课件参数提取助手。你需要从用
   "grade": 年级数字或0,
   "lesson_type": "课型或空串",
   "textbook": "教材版本（LLM 推断，如"部编版二年级上册"）",
-  "image_style": "配图风格或省略",
+  "image_style": "配图风格（预置档或用户原话）或省略",
   "image_count": "minimal/all/none 或省略",
   "params_ready": true或false,
   "question": "向用户提问的内容（params_ready=false 时必填，否则填空串）",
@@ -151,8 +158,7 @@ SYSTEM_GEN_OUTLINE = """你是小学语文课件大纲设计助手。根据课�
 2. points 一句话（≤30 字）概括本页教学动作，供逐页生成时对齐
 3. meta.objectives 2-4 条，每条 competency 必须取四素养之一
    （文化自信/语言运用/思维能力/审美创造）
-4. theme 只能是 "default" / "fresh-blue" / "warm-green" / "mint-green"，
-   默认 "default"（mint-green=青绿商业风：编号章节头 + 全出血封面）"""
+4. theme 只能取以下清单之一，默认 "default"：{themes}"""
 
 META_CONTRACT = """| 字段 | 必填 | 说明 |
 |------|:----:|------|
@@ -161,7 +167,7 @@ META_CONTRACT = """| 字段 | 必填 | 说明 |
 | lessonType | ✅ | 精读/识字写字/古诗词/口语交际习作 |
 | textbook | ✅ | 教材版本，如"部编版二年级上册" |
 | periods | - | 总课时数（精读=2，其他 1-2） |
-| theme | - | default / fresh-blue / warm-green / mint-green |
+| theme | - | {themes} |
 | objectives | ✅ | [{{content, competency}}]，competency 取四素养之一 |
 | keyPoints / difficulties | - | 字符串数组 |"""
 
@@ -175,7 +181,7 @@ SYSTEM_EDIT_OUTLINE = """你是小学语文课件大纲编辑。用户会给出�
 
 ## 规则
 1. 新增/删除页面后重新连续编号 id（s01, s02, ...）
-2. meta.theme 只能是 default / fresh-blue / warm-green / mint-green
+2. meta.theme 只能取以下清单之一：{themes}
 3. 未被指令涉及的部分原样保留
 4. 输出必须可被 json.loads 解析"""
 

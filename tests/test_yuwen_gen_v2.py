@@ -85,11 +85,12 @@ class TestOutlinePrompt:
     @pytest.fixture
     def formatted(self):
         from aidraft.agenthub.yuwen.prompts import (
-            META_CONTRACT, SYSTEM_GEN_OUTLINE, _read_ref)
+            META_CONTRACT, SYSTEM_GEN_OUTLINE, _read_ref, _themes_hint)
         return SYSTEM_GEN_OUTLINE.format(
             stages=_read_ref("stages.md"),
             lesson_types=_read_ref("lesson-types.md"),
-            meta_contract=META_CONTRACT,
+            meta_contract=META_CONTRACT.format(themes=_themes_hint()),
+            themes=_themes_hint(),
         )
 
     def test_page_guidance(self, formatted):

@@ -1,5 +1,11 @@
 {
   "name": "default",
+  "meta": {
+    "display": "暖橙",
+    "keywords": ["默认", "橙色", "橘", "暖"],
+    "swatch": ["ED7D31", "FFF3E2", "3D2B1F"],
+    "tags": ["通用", "低年级"]
+  },
   "pal": {
     "BG": "FDF9F1",
     "BG_CARD": "FFFFFF",

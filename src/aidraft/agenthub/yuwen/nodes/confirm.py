@@ -11,7 +11,7 @@ import json
 from typing import Any, Callable
 
 from ....gateway import ChatMessage
-from ..prompts import SYSTEM_EDIT_OUTLINE
+from ..prompts import SYSTEM_EDIT_OUTLINE, _themes_hint
 from ..state import (
     YuwenState,
     _emit,
@@ -23,8 +23,8 @@ from ..state import (
     _save_state,
     _step,
 )
-from ._page import THEMES, _validate_outline
-from .gen_images import IMAGE_STYLES
+from ._page import _validate_outline
+from ..theme_registry import match_theme, theme_display
 
 # 确认意图词表：整句等于或前缀命中才算（"好"前缀避免"好像"误伤）
 _EXACT_CONFIRM = {"确认", "确认大纲", "确认大纲，开始生成", "可以", "可以的",
@@ -32,14 +32,6 @@ _EXACT_CONFIRM = {"确认", "确认大纲", "确认大纲，开始生成", "可�
                   "好", "行", "ok", "OK", "Ok", "继续", "生成吧", "开始吧"}
 _PREFIX_CONFIRM = ("确认", "可以", "好的", "没问题", "开始生成", "直接生成",
                    "同意", "ok", "OK")
-# 主题切换词表 → 目标主题（确定性映射，不经 LLM；顺序即优先级）
-_THEME_MAP = [
-    (("fresh-blue", "青蓝", "蓝色", "蓝"), "fresh-blue"),
-    # mint-green 须排在 warm-green 前："青绿"含"绿"字，后被则被墨绿误捕
-    (("mint-green", "薄荷", "青绿"), "mint-green"),
-    (("warm-green", "墨绿", "绿色", "绿"), "warm-green"),
-    (("default", "默认", "橙色", "橘"), "default"),
-]
 # 配图偏好切换（确定性）：须先含触发词，再匹配风格/数量词表（顺序即优先级）
 _IMAGE_TRIGGERS = ("配图", "插图", "生图")
 _IMAGE_STYLE_MAP = [
@@ -59,12 +51,12 @@ _COUNT_LABELS = {"minimal": "最少配图", "all": "全部配图", "none": "不�
 
 
 def _detect_theme(text: str) -> str | None:
-    """从用户消息解析主题切换意图，返回目标主题或 None。"""
-    s = text or ""
-    for keywords, theme in _THEME_MAP:
-        if any(k in s for k in keywords):
-            return theme
-    return None
+    """从用户消息解析主题切换意图，返回目标主题或 None。
+
+    匹配走 theme_registry（keywords 按词长降序，"青绿"先于"绿"不误捕），
+    词表随 themes/*.json 即插即用。
+    """
+    return match_theme(text)
 
 
 def _detect_confirm(text: str) -> bool:
@@ -88,7 +80,7 @@ def _detect_image_prefs(text: str) -> dict:
         return {}
     prefs: dict = {}
     for keywords, style in _IMAGE_STYLE_MAP:
-        if style in IMAGE_STYLES and any(k in s for k in keywords):
+        if any(k in s for k in keywords):
             prefs["image_style"] = style
             break
     for keywords, count in _IMAGE_COUNT_MAP:
@@ -149,7 +141,7 @@ def _make_confirm_node(gateway: Any, emitter: Callable[[dict], None] | None,
         def _prefs_desc() -> str:
             bits = []
             if theme:
-                bits.append(f"主题 {theme}")
+                bits.append(f"主题 {theme_display(theme)}")
             if img_prefs.get("image_style"):
                 bits.append(f"配图风格 {img_prefs['image_style']}")
             if img_prefs.get("image_count"):
@@ -176,11 +168,12 @@ def _make_confirm_node(gateway: Any, emitter: Callable[[dict], None] | None,
         if theme:
             _save_state(params, yuwen_outline=outline, yuwen_params=params)
             _emit_outline(emitter, outline)
-            _step(emitter, "confirm", "大纲确认", "done", f"主题已切换为 {theme}")
+            disp = theme_display(theme)
+            _step(emitter, "confirm", "大纲确认", "done", f"主题已切换为 {disp}")
             return {"yuwen_params": params,
                     "yuwen_outline": outline,
                     "yuwen_outline_confirmed": False,
-                    "final_answer": f"主题已切换为 {theme}，回复\"确认\"开始生成。",
+                    "final_answer": f"主题已切换为 {disp}，回复\"确认\"开始生成。",
                     "nodes_visited": visited}
 
         # 路径 B2：纯配图偏好切换 → 落盘提示，等下一轮确认
@@ -199,7 +192,8 @@ def _make_confirm_node(gateway: Any, emitter: Callable[[dict], None] | None,
 
         # 路径 C：其他自然语言 → LLM 单次改纲（指令应用到 outline JSON）
         system_prompt = SYSTEM_EDIT_OUTLINE.format(
-            outline_json=json.dumps(outline, ensure_ascii=False, indent=1))
+            outline_json=json.dumps(outline, ensure_ascii=False, indent=1),
+            themes=_themes_hint())
         edited: dict | None = None
         err = ""
         try:

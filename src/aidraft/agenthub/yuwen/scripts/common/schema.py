@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 import sys
+from pathlib import Path
 
 # ---- 枚举定义（内容层与渲染层共享的契约）----------------------------
 
@@ -59,8 +60,12 @@ DEFAULT_PERIODS = {
     "口语交际习作": 1,
 }
 
-# 主题包名（common/themes/*.json）；未知值 normalize 时归一 default
-LESSON_THEMES = {"default", "fresh-blue", "warm-green", "mint-green"}
+# 主题包名：扫描 common/themes/*.json（即插即用——新主题包自动进值域）；
+# 未知值 normalize 时归一 default。目录扫描在 import 时做一次，渲染子进程
+# 生命周期短（一条命令一个进程），无需 mtime 缓存。
+LESSON_THEMES = {p.stem for p in
+                 (Path(__file__).resolve().parent / "themes").glob("*.json")}
+LESSON_THEMES.add("default")
 
 REQUIRED_META = ("title", "grade", "lessonType")
 

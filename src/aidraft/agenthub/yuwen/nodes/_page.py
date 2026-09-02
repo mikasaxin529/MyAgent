@@ -9,8 +9,10 @@ from __future__ import annotations
 import copy
 import inspect
 
-# 主题枚举（与 outline prompt / confirm 主题切换词表保持一致）
-THEMES = ("default", "fresh-blue", "warm-green", "mint-green")
+from ..theme_registry import theme_names
+
+# 主题枚举：注册表派生（themes/*.json 即插即用），保留元组形态兼容旧引用
+THEMES = tuple(theme_names())
 
 
 def _call_llm(gateway, method: str, msgs, model_kwargs: dict, **kw):
@@ -59,7 +61,9 @@ def _merge_meta(outline: dict, params: dict) -> dict:
         if base.get(k):
             meta[k] = base[k]
     meta.setdefault("theme", "default")
-    if meta["theme"] not in THEMES:
+    # 值域查注册表（目录新增主题自动进值域）；每次调用重取——渲染子进程
+    # 常驻不重扫，主进程图节点每轮新建自然感知新增主题
+    if meta["theme"] not in theme_names():
         meta["theme"] = "default"
     return meta
 

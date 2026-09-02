@@ -1,5 +1,11 @@
 {
   "name": "fresh-blue",
+  "meta": {
+    "display": "青蓝",
+    "keywords": ["青蓝", "蓝色", "蓝"],
+    "swatch": ["2E7BB5", "F4F9FB", "1F3A4D"],
+    "tags": ["清新", "通用"]
+  },
   "pal": {
     "BG": "F4F9FB",
     "BG_CARD": "FFFFFF",

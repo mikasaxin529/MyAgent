@@ -1,5 +1,11 @@
 {
   "name": "mint-green",
+  "meta": {
+    "display": "青绿",
+    "keywords": ["薄荷", "青绿"],
+    "swatch": ["2DD4BF", "F3F4F6", "1F2937"],
+    "tags": ["商业风", "现代"]
+  },
   "pal": {
     "BG": "F3F4F6",
     "BG_CARD": "FFFFFF",

@@ -26,14 +26,16 @@ def _normalize_grade(raw: Any) -> int:
 def _image_prefs(parsed: dict) -> dict:
     """从 LLM 抽取结果提取可选配图偏好（image_style/image_count）。
 
-    用户没提或值非法就不写该键——gen_images 侧缺省走"绘本 + minimal"。
+    风格开放透传：任意非空串都收（预置档 / 自由风格如"赛博朋克"），
+    gen_images 侧统一拼 prompt。数量是三档枚举，值域外丢弃。
+    用户没提就不写该键——gen_images 侧缺省走"绘本 + minimal"。
     """
-    from .gen_images import IMAGE_COUNTS, IMAGE_STYLES
+    from .gen_images import IMAGE_COUNTS
 
     prefs: dict = {}
     style = str(parsed.get("image_style") or "").strip()
-    if style in IMAGE_STYLES:
-        prefs["image_style"] = style
+    if style:
+        prefs["image_style"] = style[:20]  # 防失控长串，风格词不会超过这个长度
     count = str(parsed.get("image_count") or "").strip()
     if count in IMAGE_COUNTS:
         prefs["image_count"] = count

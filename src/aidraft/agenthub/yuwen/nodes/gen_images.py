@@ -32,8 +32,11 @@ from ..state import (
     _step,
 )
 
-# 配图风格表：风格短语统一在 prompt 里以"，无文字，无水印"收尾
-# （模型爱在图里写字，中文渲染又尤其崩坏）
+# 配图风格表：预置五档（key → 风格短语）。风格短语统一在 prompt 里
+# 以"，无文字，无水印"收尾（模型爱在图里写字，中文渲染又尤其崩坏）。
+# 自由风格透传：IMAGE_STYLES 之外任意非空串（如"赛博朋克""蜡笔"）不回退
+# 默认，直接以 "<风格>风格" 拼进 prompt——extract_params 抽到的用户原话
+# 即为风格指令，挡在外面反而违背用户意图。
 IMAGE_STYLES = {
     "绘本": "儿童绘本风格，色彩明亮温暖，构图简洁",
     "水彩": "水彩插画风格，笔触柔和，清新淡雅",
@@ -48,9 +51,13 @@ _COUNT_LABELS = {"minimal": "最少配图", "all": "全部配图", "none": "不�
 
 
 def _resolve_image_options(params: dict) -> tuple[str, str]:
-    """从 params 解析配图风格/数量档位；非法值回退默认。"""
+    """从 params 解析配图风格/数量档位。
+
+    风格：预置五档之外的非空串视为自由风格透传（不回退默认）；
+    空串才走默认。数量：值域外回退默认。
+    """
     style = str(params.get("image_style") or "").strip()
-    if style not in IMAGE_STYLES:
+    if not style:
         style = DEFAULT_IMAGE_STYLE
     count = str(params.get("image_count") or "").strip()
     if count not in IMAGE_COUNTS:
@@ -64,8 +71,9 @@ def _image_prompt(el: dict, page: dict, meta: dict,
 
     课件插图要的是"符合小学课堂语境的插画"，明确排除文字/水印。
     按元素角色分三种 prompt：普通内嵌图 / 全出血背景图 / 四格连环画。
+    风格段：预置档查表；自由风格（表外非空串）透传为"<风格>风格"。
     """
-    style_seg = IMAGE_STYLES.get(style, IMAGE_STYLES[DEFAULT_IMAGE_STYLE])
+    style_seg = IMAGE_STYLES.get(style) or f"{style}风格"
 
     # 全出血背景图（封面/导入页）：横构图、留出中心视觉呼吸——文字压图
     if el.get("background"):

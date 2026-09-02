@@ -734,6 +734,30 @@ body {
 }
 .oc-badge.theme { color: var(--brand-deep); border-color: var(--brand); background: var(--brand-soft); }
 .oc-sub { padding: 0 14px 8px; font-size: 12px; color: var(--text3); }
+/* 主题选择器（outline 帧 options.themes）：色卡+名称的小按钮组 */
+.oc-themes {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 2px 14px 10px;
+}
+.oc-theme-btn {
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 4px 10px 4px 6px; font-size: 12px; font-weight: 600;
+  color: var(--text2); background: var(--bg);
+  transition: .15s; font-family: inherit;
+}
+.oc-theme-btn:hover { border-color: var(--brand); color: var(--brand-deep); }
+.oc-theme-btn.active {
+  border-color: var(--brand); background: var(--brand-soft);
+  color: var(--brand-deep); cursor: default;
+}
+.oc-theme-btn .oc-swatch {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
+}
+.oc-theme-btn .oc-swatch i {
+  width: 10px; height: 10px; border-radius: 50%; display: block;
+}
 .oc-pages {
   max-height: 320px; overflow-y: auto;
   border-top: 1px solid var(--line); padding: 6px 0;

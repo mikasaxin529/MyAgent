@@ -1,5 +1,11 @@
 {
   "name": "warm-green",
+  "meta": {
+    "display": "墨绿",
+    "keywords": ["墨绿", "绿色", "绿"],
+    "swatch": ["3E8E5A", "F5F9F3", "22372B"],
+    "tags": ["沉稳", "古诗文"]
+  },
   "pal": {
     "BG": "F5F9F3",
     "BG_CARD": "FFFFFF",

@@ -37,7 +37,9 @@
 
 帧契约（与前端 2c 的接口，其余帧类型沿用阶段 1）：
   {"type": "outline", "outline": {pages:[{id,kind,title,points,period}], meta:{...}},
-   "chips": ["确认大纲，开始生成", "第1页改成…", "换青蓝主题", "换墨绿主题"]}
+   "chips": ["确认大纲，开始生成", "第1页改成…", "换青蓝主题", …],
+   "options": {"themes": [{name, display, swatch, tags}]}}  # M1：注册表全集，
+                                                            # 前端不再维护静态映射
   {"type": "review", "review": {"scores": {structure,pedagogy,content,stage_fit},
                                 "issues": [{page_id, problems:[str]}], "pass": bool}}
   {"type": "visual", "visual": {available: bool,   // false=未跑（无key/无soffice/失败）
@@ -50,7 +52,8 @@
   visual_review 经 rollback 标记透传修复前结果，不重调 VLM）——前端按
   "最新帧覆盖"渲染即可，无新增帧类型；visual_fix 进度走通用 step 帧
   （id=visual_fix, label=视觉修复/视觉修复复查）。
-  meta.theme ∈ default / fresh-blue / warm-green（渲染器由 renderer agent 消费）。
+  meta.theme 值域由 theme_registry 扫描 themes/*.json 派生（即插即用），
+  渲染器由 renderer agent 消费。
   gen_images 回写的 image.src 是**相对 session 目录**路径（如 "assets/s03_2.png"），
   渲染器需解析为绝对路径。
 

@@ -192,11 +192,21 @@ def _outline_summary(outline: dict) -> str:
 # 仍路由 confirm，由 confirm 从盘上（_find_pending_session）找回会话。
 _CONFIRM_WORDS = ("确认", "可以", "没问题", "开始生成", "直接生成", "就这样",
                   "同意", "ok", "OK", "好", "行", "继续")
-_THEME_WORDS = ("blue", "fresh", "green", "warm", "mint", "主题", "蓝色", "青蓝",
-                "绿色", "墨绿", "青绿", "薄荷", "橙色", "默认")
 # 配图偏好切换触发词（与 confirm._IMAGE_TRIGGERS 保持一致）：
 # "配图用水彩""插图多一些""不要配图"也是对大纲轮的应答，需兜底路由进 confirm
 _IMAGE_WORDS = ("配图", "插图", "生图")
+
+
+def _theme_words() -> tuple[str, ...]:
+    """主题触发词表（注册表派生）："主题" + 各主题 keywords 全集。
+
+    加主题自动进词表——新主题的中文别名在路由兜底层同样生效。
+    """
+    from .theme_registry import list_themes
+    words = {"主题"}
+    for r in list_themes():
+        words.update(r["keywords"])
+    return tuple(words)
 
 
 def _looks_like_outline_command(msg: str) -> bool:
@@ -204,7 +214,7 @@ def _looks_like_outline_command(msg: str) -> bool:
     s = (msg or "").strip()
     if not s or len(s) > 40:
         return False
-    if any(w in s for w in _THEME_WORDS) or any(w in s for w in _IMAGE_WORDS):
+    if any(w in s for w in _theme_words()) or any(w in s for w in _IMAGE_WORDS):
         return True
     # 确认词要求整句短且不含新课文信息信号（书名号）——"确认大纲，开始生成"
     # 命中；"确认《静夜思》课件参数"这种含书名号的走正常 extract_params。
@@ -248,12 +258,22 @@ def _find_pending_session() -> tuple[dict, dict] | None:
 def _emit_outline(emitter: Callable[[dict], None] | None, outline: dict) -> None:
     """发 outline 帧 + 摘要 content 帧（帧契约见 graph.py docstring）。
 
+    outline 帧新增 options 段（M1 主题即插即用）：themes 是注册表全集
+    [{name, display, swatch, tags}]，前端据此渲染主题选择器/徽章，不再
+    维护静态映射表；chips 仍是快捷入口（前 3 个非默认主题）。
     只发 content 不发 token（api.py 对两者都累加 final_answer，重复发会翻倍）。
     """
+    from .theme_registry import list_themes, theme_chip_labels
+    theme_options = [
+        {"name": r["name"], "display": r["display"],
+         "swatch": r["swatch"], "tags": r["tags"]}
+        for r in list_themes()
+    ]
     _emit(emitter, {
         "type": "outline",
         "outline": outline,
-        "chips": ["确认大纲，开始生成", "第1页改成…", "换青蓝主题", "换墨绿主题"],
+        "chips": ["确认大纲，开始生成", "第1页改成…"] + theme_chip_labels(),
+        "options": {"themes": theme_options},
     })
     _emit(emitter, {
         "type": "content",

@@ -951,8 +951,8 @@ class TestGenImages:
         assert prompts and all("水彩插画风格" in p for p in prompts)
         assert all("无文字，无水印" in p for p in prompts)
 
-    def test_invalid_style_falls_back_default(self, outputs_tmp):
-        """非法 image_style → 回退默认"绘本"短语。"""
+    def test_freeform_style_passthrough(self, outputs_tmp):
+        """表外 image_style（自由风格"赛博朋克"）→ 透传为"赛博朋克风格"短语。"""
         from aidraft.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
         doc = self._doc_with_images()
         fake_gen = MagicMock()
@@ -960,6 +960,21 @@ class TestGenImages:
         fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
         node = _make_gen_images_node(None)
         params = {**PARAMS, "image_style": "赛博朋克"}
+        with patch("aidraft.agenthub.yuwen.imagegen.ImageGen",
+                   MagicMock(return_value=fake_gen)):
+            asyncio.run(node({"yuwen_params": params, "yuwen_content": doc}))
+        prompts = [c[0][0] for c in fake_gen.generate.call_args_list]
+        assert prompts and all("赛博朋克风格" in p for p in prompts)
+
+    def test_empty_style_falls_back_default(self, outputs_tmp):
+        """空 image_style → 回退默认"绘本"短语。"""
+        from aidraft.agenthub.yuwen.nodes.gen_images import _make_gen_images_node
+        doc = self._doc_with_images()
+        fake_gen = MagicMock()
+        fake_gen.available = True
+        fake_gen.generate = AsyncMock(return_value=b"\x89PNG")
+        node = _make_gen_images_node(None)
+        params = {**PARAMS, "image_style": ""}
         with patch("aidraft.agenthub.yuwen.imagegen.ImageGen",
                    MagicMock(return_value=fake_gen)):
             asyncio.run(node({"yuwen_params": params, "yuwen_content": doc}))
@@ -1222,7 +1237,7 @@ class TestExtractParams:
         assert result["yuwen_params"]["image_style"] == "水彩"
         assert result["yuwen_params"]["image_count"] == "none"
 
-        # LLM 乱抽非法风格 → 丢弃，不写键
+        # 风格开放透传：表外风格（用户原话）原样收进 params
         mock_gw.chat.return_value = _chat_response(json.dumps({
             "title": "静夜思", "grade": 1, "lesson_type": "古诗词",
             "textbook": "部编版", "image_style": "抽象派", "image_count": "lots",
@@ -1230,7 +1245,8 @@ class TestExtractParams:
         }, ensure_ascii=False))
         result = asyncio.run(node({
             "task": "做《静夜思》", "user_message": "做《静夜思》", "messages": []}))
-        assert "image_style" not in result["yuwen_params"]
+        assert result["yuwen_params"]["image_style"] == "抽象派"
+        # 数量档仍是三档枚举：非法值丢弃
         assert "image_count" not in result["yuwen_params"]
 
 

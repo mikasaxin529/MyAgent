@@ -151,7 +151,7 @@ class TestMintTheme:
         assert T.L.get("numbered_header", False) is False
 
     def test_theme_enum_everywhere(self, scripts_path):
-        """schema 枚举 / 词表 / 前端显示名全链路含 mint-green。"""
+        """schema 枚举 / 注册表 / prompt 注入全链路含 mint-green（M1：注册表派生）。"""
         from common.schema import LESSON_THEMES, normalize
         assert "mint-green" in LESSON_THEMES
         d = {"meta": {"title": "t", "grade": 2, "lessonType": "精读",
@@ -161,14 +161,24 @@ class TestMintTheme:
         sys.path.insert(0, str(_SRC))
         from aidraft.agenthub.yuwen.nodes._page import THEMES
         assert "mint-green" in THEMES
-        from aidraft.agenthub.yuwen.nodes.confirm import _THEME_MAP
-        # "青绿" 不被 warm-green 误捕：映射顺序即优先级
-        pairs = dict((k, t) for kws, t in _THEME_MAP for k in kws)
-        assert pairs["青绿"] == "mint-green"
+        from aidraft.agenthub.yuwen.theme_registry import (
+            list_themes, match_theme, theme_display, themes_hint_for_prompt)
+        # 注册表扫描目录：四主题齐全，default 首位
+        assert [r["name"] for r in list_themes()] == [
+            "default", "fresh-blue", "mint-green", "warm-green"]
+        # "青绿" 不被 warm-green 误捕：关键词按词长降序匹配
+        assert match_theme("换成青绿主题") == "mint-green"
+        assert match_theme("换成墨绿主题") == "warm-green"
+        assert match_theme("换成默认主题") == "default"
+        assert match_theme("讲的是水彩画") is None
+        assert theme_display("mint-green") == "青绿"
+        # prompt 注入的 {themes} 清单含全部主题（占位符运行时填充）
         from aidraft.agenthub.yuwen import prompts
-        for const in (prompts.SYSTEM_GEN_OUTLINE, prompts.META_CONTRACT,
-                      prompts.SYSTEM_EDIT_OUTLINE):
-            assert "mint-green" in const
+        hint = themes_hint_for_prompt()
+        assert "mint-green" in hint and "青绿" in hint
+        for tmpl in (prompts.SYSTEM_GEN_OUTLINE, prompts.META_CONTRACT,
+                     prompts.SYSTEM_EDIT_OUTLINE):
+            assert "{themes}" in tmpl  # 占位符存在，值运行时从注册表来
 
 
 # ---------------------------------------------------------------- 2. 新版式三格式渲染

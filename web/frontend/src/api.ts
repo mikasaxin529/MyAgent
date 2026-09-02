@@ -48,10 +48,24 @@ export interface OutlineMeta {
   theme?: string;
 }
 
+/** 主题选项（outline 帧 options.themes[]，来自后端注册表扫描） */
+export interface ThemeOption {
+  name: string;
+  display: string;
+  swatch?: string[];
+  tags?: string[];
+}
+
+/** outline 帧 options 段（M1 主题即插即用） */
+export interface OutlineOptions {
+  themes?: ThemeOption[];
+}
+
 /** outline 帧 payload：课件大纲，等用户确认 */
 export interface OutlineData {
   meta?: OutlineMeta;
   pages?: OutlinePage[];
+  options?: OutlineOptions;
 }
 
 /** review 帧四维评分（1-5） */

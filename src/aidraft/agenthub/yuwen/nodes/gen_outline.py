@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ....gateway import ChatMessage
-from ..prompts import SYSTEM_GEN_OUTLINE, META_CONTRACT, _read_ref
+from ..prompts import SYSTEM_GEN_OUTLINE, META_CONTRACT, _read_ref, _themes_hint
 from ..state import (
     YuwenState,
     _emit_outline,
@@ -41,7 +41,8 @@ def _make_gen_outline_node(gateway: Any, emitter: Callable[[dict], None] | None,
         system_prompt = SYSTEM_GEN_OUTLINE.format(
             stages=_read_ref("stages.md"),
             lesson_types=_read_ref("lesson-types.md"),
-            meta_contract=META_CONTRACT,
+            meta_contract=META_CONTRACT.format(themes=_themes_hint()),
+            themes=_themes_hint(),
         )
         user_prompt = (
             f"请为以下课文设计课件大纲：\n"
