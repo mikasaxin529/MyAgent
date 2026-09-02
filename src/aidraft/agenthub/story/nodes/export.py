@@ -65,6 +65,18 @@ def _export_docx(path, synopsis: dict, storyboard: dict, characters: dict) -> No
         doc.add_paragraph(
             f"{c.get('name', '')}（{c.get('role', '')}）：{c.get('description', '')}",
             style="List Bullet")
+        # 戏剧字段行（Sudowrite story bible 式：want/need/arc/voice）
+        drama_bits = []
+        for label, key in (("目标", "want"), ("课题", "need"),
+                           ("弧线", "arc"), ("口吻", "voice"),
+                           ("关系", "relationships")):
+            if str(c.get(key) or "").strip():
+                drama_bits.append(f"{label}：{c[key]}")
+        if drama_bits:
+            p = doc.add_paragraph("　　" + "；".join(drama_bits))
+            for r in p.runs:
+                r.font.size = Pt(10.5)
+                r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
     doc.add_heading("正文", level=1)
     for sc in storyboard.get("scenes") or []:
@@ -77,7 +89,10 @@ def _export_docx(path, synopsis: dict, storyboard: dict, characters: dict) -> No
                 r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
         for sh in sc.get("shots") or []:
             head = (f"[{sh.get('id', '')}] {sh.get('shot_size', '')}"
-                    f"·{sh.get('camera', '')}")
+                    f"·{sh.get('camera', '')}"
+                    + (f"·{sh['camera_angle']}" if sh.get("camera_angle") else "")
+                    + (f"·{sh['duration_sec']}s" if sh.get("duration_sec") else "")
+                    + (f"→{sh['transition']}" if sh.get("transition") else ""))
             doc.add_paragraph(head).runs[0].bold = True
             action = str(sh.get("action") or sh.get("subject") or "")
             if action:
@@ -98,8 +113,9 @@ def _export_xlsx(path, storyboard: dict) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "分镜表"
-    headers = ["场号", "场景", "镜号", "景别", "运镜", "画面主体", "动作",
-               "台词", "音效", "画面描述(image_prompt)"]
+    headers = ["场号", "场景", "镜号", "景别", "运镜", "机位角度", "时长(s)",
+               "转场", "画面主体", "动作", "台词", "音效",
+               "画面描述(image_prompt)"]
     ws.append(headers)
     head_fill = PatternFill("solid", fgColor="7C5CBF")
     for cell in ws[1]:
@@ -111,11 +127,13 @@ def _export_xlsx(path, storyboard: dict) -> None:
             ws.append([
                 sc.get("scene_no", ""), sc.get("slug", ""),
                 sh.get("id", ""), sh.get("shot_size", ""),
-                sh.get("camera", ""), sh.get("subject", ""),
+                sh.get("camera", ""), sh.get("camera_angle", ""),
+                sh.get("duration_sec", ""), sh.get("transition", ""),
+                sh.get("subject", ""),
                 sh.get("action", ""), sh.get("dialogue", ""),
                 sh.get("sfx", ""), sh.get("image_prompt", ""),
             ])
-    widths = [6, 22, 8, 8, 8, 28, 30, 30, 16, 44]
+    widths = [6, 22, 8, 8, 8, 9, 8, 8, 28, 30, 30, 16, 44]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[chr(64 + i)].width = w
     for row in ws.iter_rows(min_row=2):
@@ -136,11 +154,18 @@ def _export_html(path, synopsis: dict, storyboard: dict,
         shots = []
         for sh in sc.get("shots") or []:
             dlg = str(sh.get("dialogue") or "").strip()
+            meta_bits = [str(x) for x in
+                         (sh.get("shot_size"), sh.get("camera"),
+                          sh.get("camera_angle")) if x]
+            if sh.get("duration_sec"):
+                meta_bits.append(f"{sh['duration_sec']}s")
+            if sh.get("transition"):
+                meta_bits.append(f"→{sh['transition']}")
             shots.append(f"""
         <div class="shot">
           <div class="shot-head">
             <span class="shot-id">{esc(sh.get('id'))}</span>
-            <span class="shot-meta">{esc(sh.get('shot_size'))} · {esc(sh.get('camera'))}</span>
+            <span class="shot-meta">{esc(' · '.join(meta_bits))}</span>
           </div>
           <div class="img-prompt">{esc(sh.get('image_prompt'))}</div>
           <div class="action">{esc(sh.get('action') or sh.get('subject'))}</div>
@@ -160,11 +185,20 @@ def _export_html(path, synopsis: dict, storyboard: dict,
         if c.get("portrait"):
             portrait = (f'<img class="portrait" src="{esc(c["portrait"])}" '
                         f'alt="{esc(c.get("name"))}" loading="lazy">')
+        drama = ""
+        if any(str(c.get(k) or "").strip() for k in
+               ("want", "need", "arc", "voice", "relationships")):
+            drama = (f'<p class="drama">🎯 {esc(c.get("want"))}　'
+                     f'🧩 {esc(c.get("need"))}<br>'
+                     f'📈 {esc(c.get("arc"))}　🗣 {esc(c.get("voice"))}<br>'
+                     f'🔗 {esc(c.get("relationships"))}</p>')
         chars_html.append(f"""
         <div class="char">{portrait}
           <div><b>{esc(c.get('name'))}</b>
             <span class="role">{esc(c.get('role'))}</span>
-            <p>{esc(c.get('description'))}</p></div>
+            <p>{esc(c.get('description'))}</p>
+            {drama}
+          </div>
         </div>""")
 
     page = f"""<!doctype html>
@@ -200,6 +234,7 @@ h1 {{ font-size:26px; margin:0 0 4px; }}
   background:#F1EBFA; flex:none; }}
 .role {{ color:var(--accent); font-size:12px; margin-left:6px; }}
 .char p {{ margin:4px 0 0; font-size:12.5px; color:#5C5478; }}
+.drama {{ color:#6B5A93; border-top:1px dashed #E5DEF0; padding-top:6px; }}
 h2 {{ font-size:16px; margin:28px 0 10px; }}
 </style></head><body><div class="wrap">
 <h1>{esc(synopsis.get('title'))}</h1>

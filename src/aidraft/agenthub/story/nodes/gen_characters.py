@@ -22,7 +22,12 @@ from ..state import (
 
 
 def _validate_characters(parsed) -> list[str]:
-    """角色卡轻校验。"""
+    """角色卡轻校验。
+
+    视觉字段（description/ref_prompt）硬校验——下游立绘生图直接吃它；
+    戏剧字段（want/need/arc/voice/relationships）归一化补键不判错——
+    LLM 偶尔漏一个不至于让整卡作废重跑，缺的填空串保前端/导出不 KeyError。
+    """
     errors: list[str] = []
     if not isinstance(parsed, dict):
         return ["角色顶层必须是对象"]
@@ -36,6 +41,8 @@ def _validate_characters(parsed) -> list[str]:
         for k in ("id", "name", "description", "ref_prompt"):
             if not str(c.get(k) or "").strip():
                 errors.append(f"characters[{i}] 缺 {k}")
+        for k in ("want", "need", "arc", "voice", "relationships"):
+            c.setdefault(k, "")
     return errors
 
 
